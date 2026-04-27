@@ -95,7 +95,8 @@ export class LocalController {
     const cosP = Math.cos(this.pitch);
     const sinP = Math.sin(this.pitch);
     const cx = this.position.x + CAM_DIST * Math.sin(this.yaw) * cosP;
-    const cy = this.position.y - CAM_DIST * sinP;
+    // Don't let an aggressive look-up push the camera through the floor.
+    const cy = Math.max(0.6, this.position.y - CAM_DIST * sinP);
     const cz = this.position.z + CAM_DIST * Math.cos(this.yaw) * cosP;
     this.camera.position.set(cx, cy, cz);
     this.camera.lookAt(this.position.x, this.position.y, this.position.z);
