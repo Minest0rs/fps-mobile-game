@@ -143,7 +143,7 @@ export class InputManager {
       this.joystickActive = false;
       this.joystickPointer = -1;
       this.joystickValue = { x: 0, y: 0 };
-      joystickHandle.style.transform = "translate(-50%, -50%)";
+      joystickHandle.style.transform = "";
       joystickBase.classList.remove("active");
     };
     joystickZone.addEventListener("pointerup", endJoystick);
@@ -199,7 +199,9 @@ export class InputManager {
     const len = Math.hypot(dx, dy);
     if (len > radius) { dx = (dx / len) * radius; dy = (dy / len) * radius; }
     this.joystickValue = { x: dx / radius, y: -dy / radius };
-    handle.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    // CSS already centres the handle (margin-left/top: -30px); only apply
+    // the displacement so the handle visually tracks the thumb.
+    handle.style.transform = `translate(${dx}px, ${dy}px)`;
   }
 }
 
