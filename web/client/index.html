@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0d12" />
+  <title>Arena · Browser FPS</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="canvas-host"></div>
+
+  <div id="menu" class="overlay">
+    <div class="card">
+      <h1>Arena</h1>
+      <p class="muted">3D multiplayer browser FPS</p>
+      <label>Name <input id="name-input" maxlength="20" placeholder="Player" /></label>
+      <label>Skin
+        <select id="skin-select">
+          <option value="neon">Neon (Lv 0)</option>
+          <option value="crimson">Crimson (Lv 0)</option>
+          <option value="cyber">Cyber (Lv 2)</option>
+          <option value="gold">Gold (Lv 5)</option>
+        </select>
+      </label>
+      <p class="muted small" id="profile-line">Lv 1 · 0 XP</p>
+      <button id="play-button">Play</button>
+      <p class="status" id="status"></p>
+      <p class="muted small">Desktop: WASD + mouse, click to shoot, Space to jump.<br/>Mobile: left joystick, right drag to look, fire button.</p>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="hp-bar"><div id="hp-fill"></div></div>
+    <div id="ammo">∞</div>
+    <div id="kill-feed"></div>
+    <div id="scoreboard" class="hidden"></div>
+
+    <div id="touch-controls" class="touch-only">
+      <div id="joystick-base"><div id="joystick-handle"></div></div>
+      <div id="look-area"></div>
+      <button id="fire-button" class="touch-button">FIRE</button>
+      <button id="jump-button" class="touch-button">JUMP</button>
+      <button id="scoreboard-button" class="touch-button small">SCORE</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

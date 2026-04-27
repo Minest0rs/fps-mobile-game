@@ -1,0 +1,118 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #canvas-host { width: 100%; height: 100%; overflow: hidden; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #05060a;
+  color: #e6e9ef;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+
+#canvas-host { position: fixed; inset: 0; }
+canvas { display: block; }
+
+.overlay {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 30%, rgba(50,90,180,0.25), rgba(5,6,10,0.92));
+  z-index: 10;
+}
+.card {
+  width: min(360px, 86vw);
+  background: #11141d;
+  border: 1px solid #232838;
+  border-radius: 14px;
+  padding: 28px 24px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column; gap: 14px;
+}
+h1 { font-size: 28px; letter-spacing: 0.06em; }
+.muted { color: #8b93a7; }
+.small { font-size: 12px; }
+label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #b9c0d2; }
+input, select {
+  background: #0c0f17; color: #e6e9ef; border: 1px solid #232838;
+  border-radius: 8px; padding: 10px 12px; font-size: 15px;
+}
+button {
+  background: linear-gradient(135deg, #4c8bff, #2c5dff);
+  color: white; border: none; padding: 12px; border-radius: 10px;
+  font-size: 16px; cursor: pointer; font-weight: 600;
+}
+button:active { transform: scale(0.98); }
+.status { color: #ff8a8a; min-height: 18px; font-size: 13px; }
+
+.hidden { display: none !important; }
+
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+
+#crosshair {
+  position: absolute; left: 50%; top: 50%;
+  width: 8px; height: 8px; transform: translate(-50%,-50%);
+  border-radius: 50%; box-shadow: 0 0 0 1px rgba(255,255,255,0.85), 0 0 8px rgba(0,0,0,0.6);
+}
+
+#hp-bar {
+  position: absolute; left: 16px; bottom: 16px;
+  width: 220px; height: 14px; background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,255,255,0.18); border-radius: 7px; overflow: hidden;
+}
+#hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #5dffa3, #2cd97a); transition: width 0.15s; }
+
+#ammo { position: absolute; right: 16px; bottom: 16px; font-size: 22px; font-weight: 700; opacity: 0.85; }
+
+#kill-feed {
+  position: absolute; right: 16px; top: 16px; max-width: 320px;
+  font-size: 13px; line-height: 1.5; opacity: 0.95;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+}
+#kill-feed .row { background: rgba(0,0,0,0.45); padding: 4px 8px; border-radius: 4px; }
+#kill-feed .row .me { color: #ffd66e; font-weight: 700; }
+
+#scoreboard {
+  position: absolute; left: 50%; top: 12%; transform: translateX(-50%);
+  background: rgba(10,12,18,0.85); padding: 14px 22px; border-radius: 10px;
+  font-size: 14px; min-width: 280px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+#scoreboard table { width: 100%; border-collapse: collapse; }
+#scoreboard th, #scoreboard td { padding: 4px 10px; text-align: left; }
+#scoreboard th { color: #8b93a7; font-weight: 600; font-size: 12px; }
+#scoreboard tr.me td { color: #ffd66e; font-weight: 700; }
+
+#touch-controls { position: absolute; inset: 0; pointer-events: none; }
+.touch-only { display: none; }
+
+#joystick-base {
+  position: absolute; left: 24px; bottom: 80px;
+  width: 120px; height: 120px; border-radius: 60px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  pointer-events: auto; touch-action: none;
+}
+#joystick-handle {
+  position: absolute; left: 50%; top: 50%; width: 56px; height: 56px;
+  margin-left: -28px; margin-top: -28px;
+  background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 28px;
+}
+#look-area {
+  position: absolute; right: 0; top: 0; bottom: 160px; width: 60%;
+  pointer-events: auto; touch-action: none;
+}
+.touch-button {
+  position: absolute; pointer-events: auto;
+  width: 90px; height: 90px; border-radius: 50%;
+  background: rgba(255,80,80,0.25); border: 2px solid rgba(255,80,80,0.6);
+  color: white; font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+}
+.touch-button.small { width: 60px; height: 60px; font-size: 11px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); }
+#fire-button { right: 28px; bottom: 90px; }
+#jump-button { right: 130px; bottom: 110px; background: rgba(120,180,255,0.25); border-color: rgba(120,180,255,0.6); }
+#scoreboard-button { right: 28px; top: 28px; }
+
+@media (pointer: coarse), (max-width: 800px) {
+  .touch-only { display: block; }
+}
