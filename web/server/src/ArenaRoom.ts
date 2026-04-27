@@ -21,11 +21,14 @@ export class ArenaRoom extends Room<ArenaState> {
       const p = this.state.players.get(client.sessionId);
       if (!p || p.hp <= 0) return;
       // Clamp into arena bounds — server is authoritative on position.
-      p.x = clamp(msg.x, -ARENA_HALF, ARENA_HALF);
-      p.z = clamp(msg.z, -ARENA_HALF, ARENA_HALF);
-      p.y = clamp(msg.y, 0, 8);
-      p.yaw = msg.yaw;
-      p.pitch = clamp(msg.pitch, -1.4, 1.4);
+      // All numeric fields are guarded against NaN/Infinity from a hostile
+      // client, since invalid values would replicate to other clients and
+      // corrupt their rendering (e.g. yaw=NaN breaks Math.sin in setPose).
+      p.x = clamp(safeNum(msg.x), -ARENA_HALF, ARENA_HALF);
+      p.z = clamp(safeNum(msg.z), -ARENA_HALF, ARENA_HALF);
+      p.y = clamp(safeNum(msg.y), 0, 8);
+      p.yaw = safeNum(msg.yaw);
+      p.pitch = clamp(safeNum(msg.pitch), -1.4, 1.4);
     });
 
     this.onMessage<ShootMsg>("shoot", (client, msg) => {
@@ -118,4 +121,8 @@ export class ArenaRoom extends Room<ArenaState> {
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+function safeNum(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }

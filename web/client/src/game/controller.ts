@@ -9,10 +9,10 @@ const PITCH_LIMIT = 1.1;
 const PLAYER_RADIUS = 0.45;
 // Third-person camera offsets — the hipfire pose is "over the shoulder",
 // the ADS pose is closer and tighter behind the head.
-const CAM_DIST_HIP = 4.5;
-const CAM_DIST_ADS = 2.2;
-const SHOULDER_HIP = 0.9;
-const SHOULDER_ADS = 0.45;
+const CAM_DIST_HIP = 4.2;
+const CAM_DIST_ADS = 2.0;
+const SHOULDER_HIP = 0.45;
+const SHOULDER_ADS = 0.25;
 
 /**
  * Owns the local player camera and emits movement updates. Movement is computed
@@ -36,6 +36,8 @@ export class LocalController {
     private camera: THREE.PerspectiveCamera,
     private arenaHalf: number,
     private obstacles: Obstacles = { boxes: [], cylinders: [] },
+    /** Ground elevation lookup; defaults to flat 0 when not provided. */
+    private heightAt: (x: number, z: number) => number = () => 0,
   ) {}
 
   setPosition(x: number, y: number, z: number) {
@@ -129,17 +131,16 @@ export class LocalController {
   getMuzzlePosition(): THREE.Vector3 {
     const sy = Math.sin(this.yaw);
     const cy = Math.cos(this.yaw);
-    // Local muzzle: in front of the right shoulder of the avatar
-    // (gun model is at (0.35, 1.45, -0.55) with length 0.85, so the barrel
-    // tip sits at z ≈ -0.98; round to -1.05 for headroom).
+    // Matches the rifle assembly in avatar.ts: gun group at local
+    // (0.35, 1.45, -0.30), barrel tip at gun-local z = -0.995.
     const lx = 0.35;
-    const lz = -1.05;
+    const lz = -1.30;
     const wx = this.position.x + lx * cy + lz * sy;
     const wz = this.position.z - lx * sy + lz * cy;
-    return new THREE.Vector3(wx, this.position.y - 0.2, wz);
+    return new THREE.Vector3(wx, this.position.y - 0.15, wz);
   }
 
-  /** Land on top of crates and stop against ceilings; clamps to ground last. */
+  /** Land on top of crates and stop against ceilings; clamps to terrain last. */
   private resolveVertical(oldFeet: number) {
     const r = PLAYER_RADIUS;
     if (this.velocityY <= 0) {
@@ -173,8 +174,10 @@ export class LocalController {
         }
       }
     }
-    if (this.position.y <= 1.6) {
-      this.position.y = 1.6;
+    // Terrain floor — sample the heightfield at our (x, z) and clamp feet.
+    const ground = this.heightAt(this.position.x, this.position.z);
+    if (this.position.y <= ground + 1.6) {
+      this.position.y = ground + 1.6;
       this.velocityY = 0;
       this.grounded = true;
     }

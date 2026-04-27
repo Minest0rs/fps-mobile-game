@@ -31,7 +31,7 @@ const reloadDuration = 1.6;
 const hud = new Hud();
 hud.setMagazine(magazine);
 
-const controller = new LocalController(refs.camera, refs.arenaHalf, refs.obstacles);
+const controller = new LocalController(refs.camera, refs.arenaHalf, refs.obstacles, refs.heightAt);
 
 // Local player avatar — visible to the local player in third-person view.
 // Kept out of `avatars` so it isn't tested as a hit target.

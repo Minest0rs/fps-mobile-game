@@ -16,18 +16,18 @@ export interface AimResult {
 export function aim(
   camera: THREE.PerspectiveCamera,
   avatars: Map<string, Avatar>,
-  range = 200,
+  range = 300,
 ): AimResult {
   const origin = camera.position.clone();
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
 
   // Scale hit radius with distance: at point-blank we keep it tight (~head/
-  // shoulder size), but at long range we widen the volume so a small angular
-  // error still connects.
-  const NEAR_R = 0.7;
-  const FAR_R  = 2.0;
-  const FAR_DIST = 25;
+  // shoulder size), but at long range we widen the volume substantially so a
+  // small angular error still connects (touch aim on a phone is imprecise).
+  const NEAR_R = 0.8;
+  const FAR_R  = 3.2;
+  const FAR_DIST = 20;
 
   let bestT = range;
   let bestId: string | undefined;
@@ -59,79 +59,92 @@ export function aim(
   return bestId ? { targetId: bestId, point } : { point };
 }
 
-/** Spawn a transient glowing tracer from `from` toward `to`.
+/** Spawn a transient bullet tracer from `from` toward `to`.
  *
- *  Render the shot as a chain of glowing additive spheres rather than a
- *  beam: cylinders/planes degenerate to invisibly thin shapes when the
- *  camera looks along the shot axis (which is the common case in an FPS).
- *  A row of point-shaped sprites is unambiguous from any angle. */
+ *  Visualised as:
+ *    1. A bright muzzle flash sphere at the gun.
+ *    2. A thin glowing camera-facing beam stretched along the shot path
+ *       (a unit-length plane scaled to the shot length and oriented so
+ *       it always faces the camera; this stays visible from any angle,
+ *       unlike a cylinder/line which can degenerate).
+ *    3. An orange impact spark at the hit point. */
 export function spawnTracer(
   scene: THREE.Scene,
-  _camera: THREE.Camera,
+  camera: THREE.Camera,
   from: THREE.Vector3,
   to: THREE.Vector3,
 ) {
-  const dir = new THREE.Vector3().subVectors(to, from);
-  const totalLen = dir.length();
-  if (totalLen < 0.5) return (_dt: number) => false;
-  dir.normalize();
+  const delta = new THREE.Vector3().subVectors(to, from);
+  const length = delta.length();
+  if (length < 0.5) return (_dt: number) => false;
+  const dir = delta.clone().normalize();
+  const mid = from.clone().addScaledVector(dir, length / 2);
 
-  const START_OFFSET = 0.4;
-  const endLen = Math.max(0.6, totalLen - START_OFFSET);
-
-  // Distribute pellets along the shot path; spacing scales with length so
-  // long shots don't get crowded with hundreds of spheres.
-  const SPACING = 0.9;
-  const COUNT = Math.min(40, Math.max(6, Math.floor(endLen / SPACING)));
-  const meshes: Array<{ mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; geom: THREE.BufferGeometry }> = [];
+  // Beam: a thin rectangle along the shot axis, oriented so its short
+  // side points at the camera each frame (we orient once at spawn — for
+  // the brief lifetime that's visually indistinguishable from continuous
+  // billboarding and is much cheaper).
+  const beamGeom = new THREE.PlaneGeometry(0.12, 1);
+  // Orient: long axis (Y) along the shot, short axis (X) perpendicular to
+  // both shot dir and the camera->shot vector — always pointing at the
+  // camera as long as the shot is roughly perpendicular to that view.
+  const camToMid = new THREE.Vector3().subVectors(mid, camera.position).normalize();
+  const sideways = new THREE.Vector3().crossVectors(dir, camToMid).normalize();
+  const facing = new THREE.Vector3().crossVectors(sideways, dir).normalize();
+  const m4 = new THREE.Matrix4().makeBasis(sideways, dir, facing);
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0xfff1a5, transparent: true, opacity: 0.95,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    side: THREE.DoubleSide,
+  });
+  const beam = new THREE.Mesh(beamGeom, beamMat);
+  beam.position.copy(mid);
+  beam.scale.set(1, length, 1);
+  beam.quaternion.setFromRotationMatrix(m4);
+  beam.renderOrder = 10;
+  scene.add(beam);
 
   // Muzzle flash — large bright burst right at the barrel.
-  meshes.push(makePellet(scene, from.clone().addScaledVector(dir, START_OFFSET), 0.7, 0xfff7c2));
+  const flashGeom = new THREE.SphereGeometry(0.35, 12, 10);
+  const flashMat = new THREE.MeshBasicMaterial({
+    color: 0xfff5c0, transparent: true, opacity: 1.0,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  });
+  const flash = new THREE.Mesh(flashGeom, flashMat);
+  flash.position.copy(from).addScaledVector(dir, 0.15);
+  flash.renderOrder = 11;
+  scene.add(flash);
 
-  // Trail pellets — scale up with distance so distant pellets remain visible.
-  for (let i = 1; i < COUNT - 1; i++) {
-    const t = i / (COUNT - 1);
-    const pos = from.clone().addScaledVector(dir, START_OFFSET + t * endLen);
-    const distFromMuzzle = pos.distanceTo(from);
-    const radius = 0.32 + Math.min(0.6, distFromMuzzle * 0.05);
-    meshes.push(makePellet(scene, pos, radius, 0xffd24a));
-  }
+  // Impact spark — orange-red burst at the hit point.
+  const sparkGeom = new THREE.SphereGeometry(0.28, 12, 10);
+  const sparkMat = new THREE.MeshBasicMaterial({
+    color: 0xff8a3a, transparent: true, opacity: 1.0,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  });
+  const spark = new THREE.Mesh(sparkGeom, sparkMat);
+  spark.position.copy(to);
+  spark.renderOrder = 11;
+  scene.add(spark);
 
-  // Impact sphere — orange burst at the hit point.
-  meshes.push(makePellet(scene, to.clone(), 0.7, 0xff7a2a));
-
-  const TOTAL_LIFE = 0.55;
-  let life = TOTAL_LIFE;
+  const FLASH_LIFE = 0.08;
+  const BEAM_LIFE  = 0.18;
+  const SPARK_LIFE = 0.25;
+  let t = 0;
   return (dt: number) => {
-    life -= dt;
-    const t = Math.max(0, life / TOTAL_LIFE);
-    for (const m of meshes) m.mat.opacity = t;
-    if (life <= 0) {
-      for (const m of meshes) {
-        scene.remove(m.mesh);
-        m.geom.dispose();
-        m.mat.dispose();
-      }
+    t += dt;
+    flashMat.opacity = Math.max(0, 1 - t / FLASH_LIFE);
+    beamMat.opacity  = Math.max(0, 0.95 * (1 - t / BEAM_LIFE));
+    sparkMat.opacity = Math.max(0, 1 - t / SPARK_LIFE);
+    // Spark grows slightly as it fades for a more impact-y feel.
+    const k = 1 + Math.min(1, t / SPARK_LIFE) * 1.4;
+    spark.scale.setScalar(k);
+    if (t >= SPARK_LIFE && t >= BEAM_LIFE && t >= FLASH_LIFE) {
+      for (const obj of [beam, flash, spark]) scene.remove(obj);
+      beamGeom.dispose();  beamMat.dispose();
+      flashGeom.dispose(); flashMat.dispose();
+      sparkGeom.dispose(); sparkMat.dispose();
       return false;
     }
     return true;
   };
-}
-
-function makePellet(scene: THREE.Scene, pos: THREE.Vector3, radius: number, color: number) {
-  const mat = new THREE.MeshBasicMaterial({
-    color, transparent: true, opacity: 1.0,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-    // Disable scene fog so distant tracers stay bright instead of fading
-    // into the haze; they are short-lived so this is a reasonable cheat.
-    fog: false,
-  });
-  const geom = new THREE.SphereGeometry(radius, 10, 8);
-  const mesh = new THREE.Mesh(geom, mat);
-  mesh.position.copy(pos);
-  // Render after opaque geometry — additive blending looks correct only when
-  // we don't write to depth and draw last.
-  mesh.renderOrder = 10;
-  scene.add(mesh);
-  return { mesh, mat, geom };
 }

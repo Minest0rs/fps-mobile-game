@@ -9,7 +9,9 @@ export class Avatar {
   readonly group = new THREE.Group();
   private body: THREE.Mesh;
   private head: THREE.Mesh;
-  private gun: THREE.Mesh;
+  /** Group that holds the gun's body, grip, magazine, sight, etc. so the
+   *  whole assembly tilts together with pitch. */
+  private gun: THREE.Group;
   private laser!: THREE.Line;
   private nameTag: THREE.Sprite;
 
@@ -30,20 +32,48 @@ export class Avatar {
     this.head.castShadow = true;
     this.group.add(this.head);
 
-    const gunMat = new THREE.MeshStandardMaterial({ color: 0x222a38, roughness: 0.6, metalness: 0.6 });
-    // The avatar's local forward is -Z (default Three.js group orientation),
-    // so the gun must be at negative Z to sit in front of the body.
-    this.gun = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.85), gunMat);
-    this.gun.position.set(0.35, 1.45, -0.55);
-    this.gun.castShadow = true;
+    // Gun assembly — multiple boxes giving a recognisable rifle silhouette
+    // (handguard, barrel, stock, grip, magazine, top sight). The whole group
+    // tilts together with pitch via setPose().
+    this.gun = new THREE.Group();
+    this.gun.position.set(0.35, 1.45, -0.30);
+    const matBlack = new THREE.MeshStandardMaterial({ color: 0x1a1c22, roughness: 0.55, metalness: 0.7 });
+    const matGrip  = new THREE.MeshStandardMaterial({ color: 0x2a2e38, roughness: 0.85, metalness: 0.1 });
+    const matBarrel = new THREE.MeshStandardMaterial({ color: 0x0f1014, roughness: 0.4,  metalness: 0.85 });
+    // Receiver / handguard — main body; centred along forward (-Z).
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.16, 0.55), matBlack);
+    receiver.position.set(0, 0, -0.20);
+    // Stock — rear of the rifle, sits behind the receiver.
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.30), matBlack);
+    stock.position.set(0, -0.02, 0.18);
+    // Grip — angled box behind the magazine.
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.20, 0.10), matGrip);
+    grip.position.set(0, -0.18, -0.02);
+    grip.rotation.x = 0.18;
+    // Magazine — drops below receiver just ahead of the grip.
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.20, 0.10), matBlack);
+    mag.position.set(0, -0.18, -0.18);
+    // Barrel — thinner cylinder extending forward from the receiver.
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.030, 0.035, 0.55, 12), matBarrel);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.02, -0.72);
+    // Top rail / sight — small block on top giving a clear front profile.
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.42), matBlack);
+    rail.position.set(0, 0.10, -0.22);
+    const frontPost = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.06, 0.025), matBlack);
+    frontPost.position.set(0, 0.16, -0.42);
+    for (const m of [receiver, stock, grip, mag, barrel, rail, frontPost]) {
+      m.castShadow = true;
+      this.gun.add(m);
+    }
     this.group.add(this.gun);
 
-    // Laser sight: a thin red line projected forward from the gun barrel so
-    // the player can see exactly where the shot will go from third-person.
-    const laserMat = new THREE.LineBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0.85 });
+    // Laser sight: a thin red line emanating from the muzzle (barrel tip) so
+    // the player has an unambiguous visual cue of where the shot will go.
+    const laserMat = new THREE.LineBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0.95, fog: false });
     const laserGeom = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0, -0.45),
-      new THREE.Vector3(0, 0, -60),
+      new THREE.Vector3(0, 0.02, -0.99),
+      new THREE.Vector3(0, 0.02, -120),
     ]);
     this.laser = new THREE.Line(laserGeom, laserMat);
     this.laser.visible = false; // off until ADS is held (controlled per-frame)

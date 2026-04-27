@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { Sky } from "three/examples/jsm/objects/Sky.js";
 
 export interface CylinderObstacle { x: number; z: number; r: number; }
 export interface Obstacles {
@@ -12,8 +13,34 @@ export interface SceneRefs {
   renderer: THREE.WebGLRenderer;
   arenaHalf: number;
   obstacles: Obstacles;
+  /** Ground elevation at world (x, z); used by the controller for landing. */
+  heightAt: (x: number, z: number) => number;
   /** The non-zoomed FOV the camera was last fit to (responsive to viewport). */
   getBaseFov: () => number;
+}
+
+/** Smoothly varying ground height. Kept identical between the visual ground
+ *  geometry and the controller so the player never falls through the floor. */
+export function terrainHeight(x: number, z: number, half: number): number {
+  const edge = Math.max(Math.abs(x), Math.abs(z));
+  // Small flat zone right at the centre so the spawn pillar sits on level
+  // ground; otherwise the world has gentle rolling hills.
+  if (edge < 4) return 0;
+  const playable = edge < half - 2;
+  // Blend in the playable hills smoothly with edge weight to keep the centre
+  // mostly flat near the spawn area.
+  const playW = playable
+    ? Math.min(1, (edge - 4) / 8)
+    : 1;
+  const hills =
+    Math.sin(x * 0.10) * 0.55 +
+    Math.cos(z * 0.13) * 0.45 +
+    Math.sin((x + z) * 0.07) * 0.35 +
+    Math.cos((x - z) * 0.09) * 0.30;
+  // Outside the arena walls let the terrain swell up more dramatically so
+  // the horizon reads as a hilly landscape.
+  const outerBoost = playable ? 0 : Math.min(2.5, (edge - half) * 0.08);
+  return hills * playW + outerBoost;
 }
 
 /** Build the renderer, camera, lights, sky, ground, walls, and crates. */
@@ -21,9 +48,8 @@ export function createScene(host: HTMLElement): SceneRefs {
   const scene = new THREE.Scene();
   // Warm, hazy daytime air. The fog colour matches the sky's horizon band so
   // distant geometry blends into the skybox instead of cutting off sharply.
-  scene.background = new THREE.Color(0xb8cce0);
-  scene.fog = new THREE.Fog(0xb8cce0, 90, 260);
-  buildSky(scene);
+  scene.fog = new THREE.Fog(0xc4d4e6, 100, 320);
+  const sunDir = buildSky(scene);
 
   // Vertical FOV is recomputed each resize to keep the horizontal FOV roughly
   // constant — Three.js exposes vertical FOV but FPS players think in
@@ -54,9 +80,10 @@ export function createScene(host: HTMLElement): SceneRefs {
   const ambient = new THREE.HemisphereLight(0xbcd6ff, 0x222a3a, 1.1);
   scene.add(ambient);
 
-  // "Sun" — main shadow caster with warm tint.
+  // "Sun" — main shadow caster with warm tint, aligned with the Sky shader's
+  // sun position so shadows feel consistent with the sky.
   const sun = new THREE.DirectionalLight(0xfff1d6, 1.5);
-  sun.position.set(22, 30, 14);
+  sun.position.copy(sunDir).multiplyScalar(40);
   sun.castShadow = true;
   sun.shadow.camera.left = -55; sun.shadow.camera.right = 55;
   sun.shadow.camera.top = 55; sun.shadow.camera.bottom = -55;
@@ -88,6 +115,7 @@ export function createScene(host: HTMLElement): SceneRefs {
 
   const arenaHalf = 40;
   const obstacles = buildArena(scene, arenaHalf);
+  const heightAt = (x: number, z: number) => terrainHeight(x, z, arenaHalf);
 
   const TARGET_HFOV_DEG = 100; // wide enough to feel like a real FPS
   let baseFov = 80;
@@ -111,36 +139,33 @@ export function createScene(host: HTMLElement): SceneRefs {
   new ResizeObserver(fit).observe(host);
   fit();
 
-  return { scene, camera, renderer, arenaHalf, obstacles, getBaseFov: () => baseFov };
+  return { scene, camera, renderer, arenaHalf, obstacles, heightAt, getBaseFov: () => baseFov };
 }
 
 function buildArena(scene: THREE.Scene, half: number): Obstacles {
   const obstacles: Obstacles = { boxes: [], cylinders: [] };
 
-  // Ground — vertex-coloured grass. Each vertex gets a small green-shade
-  // jitter so the field reads as natural turf rather than flat colour.
-  const groundGeom = new THREE.PlaneGeometry(half * 2, half * 2, 64, 64);
+  // Ground — vertex-coloured grass with real height variation. The same
+  // terrainHeight() function is queried by the controller, so the player
+  // can never fall through visible terrain.
+  const SEG = 96;
+  const groundGeom = new THREE.PlaneGeometry(half * 2, half * 2, SEG, SEG);
   const colours = new Float32Array(groundGeom.attributes.position.count * 3);
+  const pos = groundGeom.attributes.position;
   const cRng = mulberry32(2024);
-  for (let i = 0; i < colours.length; i += 3) {
+  for (let i = 0; i < pos.count; i++) {
+    const wx = pos.getX(i), wy = pos.getY(i); // before -X/2 rotation, Y maps to world Z
+    const h = terrainHeight(wx, wy, half);
+    pos.setZ(i, h);
+    // Slightly tint higher ground brown / lower ground darker green.
     const t = cRng();
-    // Greens between (0.32, 0.55, 0.22) and (0.55, 0.74, 0.32) — varied turf.
-    colours[i + 0] = 0.32 + t * 0.23;
-    colours[i + 1] = 0.55 + t * 0.19;
-    colours[i + 2] = 0.22 + t * 0.10;
+    const base = 0.45 + t * 0.18;          // green base
+    const dirt = THREE.MathUtils.clamp(h * 0.18, 0, 0.35);
+    colours[i * 3 + 0] = (0.28 + t * 0.22) + dirt * 0.6;
+    colours[i * 3 + 1] = base + 0.05;
+    colours[i * 3 + 2] = (0.20 + t * 0.10) + dirt * 0.2;
   }
   groundGeom.setAttribute("color", new THREE.BufferAttribute(colours, 3));
-  // Subtly displace the ground vertices so the field has gentle undulations.
-  const pos = groundGeom.attributes.position;
-  const hRng = mulberry32(77);
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), y = pos.getY(i);
-    const edge = Math.max(Math.abs(x), Math.abs(y));
-    // Keep the playable centre flat; only the outer ring undulates so
-    // collisions don't desync between client and server.
-    if (edge < half - 4) continue;
-    pos.setZ(i, (Math.sin(x * 0.15) + Math.cos(y * 0.18)) * 0.4);
-  }
   pos.needsUpdate = true;
   groundGeom.computeVertexNormals();
   const groundMat = new THREE.MeshStandardMaterial({
@@ -152,13 +177,21 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   scene.add(ground);
 
   // Outer "landscape" — a much larger ground plane behind the play-area
-  // walls so the horizon doesn't end at the arena bounds.
+  // walls so the horizon doesn't end at the arena bounds. Also displaced.
+  const outerSeg = 80;
+  const outerGeom = new THREE.PlaneGeometry(half * 8, half * 8, outerSeg, outerSeg);
+  const opos = outerGeom.attributes.position;
+  for (let i = 0; i < opos.count; i++) {
+    const wx = opos.getX(i), wy = opos.getY(i);
+    opos.setZ(i, terrainHeight(wx, wy, half) - 0.05);
+  }
+  opos.needsUpdate = true;
+  outerGeom.computeVertexNormals();
   const outer = new THREE.Mesh(
-    new THREE.PlaneGeometry(half * 8, half * 8),
+    outerGeom,
     new THREE.MeshStandardMaterial({ color: 0x3d5a2c, roughness: 0.98 }),
   );
   outer.rotation.x = -Math.PI / 2;
-  outer.position.y = -0.05;
   outer.receiveShadow = true;
   scene.add(outer);
 
@@ -182,7 +215,7 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     color: 0x4f7a31, roughness: 1.0, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
   });
   const grassGeom = new THREE.PlaneGeometry(0.4, 0.7);
-  const grassCount = 300;
+  const grassCount = 400;
   const grass = new THREE.InstancedMesh(grassGeom, grassMat, grassCount);
   const dummy = new THREE.Object3D();
   const gRng = mulberry32(444);
@@ -190,7 +223,8 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     const x = (gRng() * 2 - 1) * (half - 1);
     const z = (gRng() * 2 - 1) * (half - 1);
     if (x * x + z * z < 9) { i--; continue; } // not on the centre pillar
-    dummy.position.set(x, 0.35, z);
+    const gy = terrainHeight(x, z, half);
+    dummy.position.set(x, gy + 0.35, z);
     dummy.rotation.set(0, gRng() * Math.PI, 0);
     dummy.scale.set(0.7 + gRng() * 0.7, 0.6 + gRng() * 0.8, 1);
     dummy.updateMatrix();
@@ -226,8 +260,9 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     [  0, 0,  30], [  0, 0, -30],
   ];
   for (const [bx, _by, bz] of bunkers) {
-    mkBox(8, 2.2, 0.7, bx,     1.1, bz, bunkerMat);
-    mkBox(0.7, 2.2, 6, bx + 4, 1.1, bz - 3, bunkerMat);
+    const gy = terrainHeight(bx, bz, half);
+    mkBox(8, 2.2, 0.7, bx,     gy + 1.1, bz, bunkerMat);
+    mkBox(0.7, 2.2, 6, bx + 4, gy + 1.1, bz - 3, bunkerMat);
   }
 
   // Crates — deterministic positions so all clients see the same layout.
@@ -239,13 +274,14 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     const pz = (rng() * 2 - 1) * (half - 2);
     // Avoid spawning crates on top of the center pillar.
     if (px * px + pz * pz < 16) { i--; continue; }
+    const gy = terrainHeight(px, pz, half);
     const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
-    c.position.set(px, s * 0.5, pz);
+    c.position.set(px, gy + s * 0.5, pz);
     c.castShadow = true; c.receiveShadow = true;
     scene.add(c);
     obstacles.boxes.push(new THREE.Box3(
-      new THREE.Vector3(px - s / 2, 0,     pz - s / 2),
-      new THREE.Vector3(px + s / 2, s,     pz + s / 2),
+      new THREE.Vector3(px - s / 2, gy,     pz - s / 2),
+      new THREE.Vector3(px + s / 2, gy + s, pz + s / 2),
     ));
   }
 
@@ -255,7 +291,8 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     [-12,  12], [ 12, -12], [-26,  0], [ 26, 0], [ 0, 24], [ 0, -24],
   ];
   for (const [tx, tz] of towers) {
-    mkBox(3, 1.4, 3, tx, 0.7, tz, towerMat);
+    const gy = terrainHeight(tx, tz, half);
+    mkBox(3, 1.4, 3, tx, gy + 0.7, tz, towerMat);
   }
 
   // Center pillar with a glowing top so the middle of the arena is a landmark.
@@ -285,43 +322,27 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   return obstacles;
 }
 
-/** A large inverted sphere with a vertex-shader gradient that fakes a sky:
- *  zenith → horizon → ground colour. Uses BackSide so the camera sees the
- *  inside surface, and depth-disabled so it always sits behind everything. */
-function buildSky(scene: THREE.Scene) {
-  const geom = new THREE.SphereGeometry(500, 32, 16);
-  const mat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: {
-      topColor:    { value: new THREE.Color(0x4a7cc4) },
-      midColor:    { value: new THREE.Color(0xb8cce0) },
-      bottomColor: { value: new THREE.Color(0x6e8c5e) },
-    },
-    vertexShader: `
-      varying vec3 vWorld;
-      void main() {
-        vWorld = normalize((modelMatrix * vec4(position, 1.0)).xyz);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }`,
-    fragmentShader: `
-      uniform vec3 topColor;
-      uniform vec3 midColor;
-      uniform vec3 bottomColor;
-      varying vec3 vWorld;
-      void main() {
-        float h = clamp(vWorld.y, -1.0, 1.0);
-        vec3 col = h > 0.0
-          ? mix(midColor, topColor, pow(h, 0.7))
-          : mix(midColor, bottomColor, pow(-h, 0.6));
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-  const mesh = new THREE.Mesh(geom, mat);
-  // Render before everything else so it acts as a backdrop.
-  mesh.renderOrder = -1;
-  scene.add(mesh);
+/** Atmospheric sky based on the Preetham analytic daylight model (built-in
+ *  three.js example shader). Returns the sun's normalised direction so the
+ *  scene's directional light can be aligned with it. */
+function buildSky(scene: THREE.Scene): THREE.Vector3 {
+  const sky = new Sky();
+  sky.scale.setScalar(8000);
+  const u = sky.material.uniforms;
+  u.turbidity.value = 6;
+  u.rayleigh.value = 1.6;
+  u.mieCoefficient.value = 0.0035;
+  u.mieDirectionalG.value = 0.78;
+  // Sun position — moderate elevation, off to one side so shadows have
+  // direction. azimuth 135° puts it in the front-right of the spawn view.
+  const elevationDeg = 28;
+  const azimuthDeg   = 135;
+  const phi   = THREE.MathUtils.degToRad(90 - elevationDeg);
+  const theta = THREE.MathUtils.degToRad(azimuthDeg);
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
+  u.sunPosition.value.copy(sunDir);
+  scene.add(sky);
+  return sunDir;
 }
 
 function mulberry32(seed: number) {
