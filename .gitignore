@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# build output
+web/client/dist/
+web/server/dist/
+**/tsconfig.tsbuildinfo
+
+# logs / runtime
+*.log
+.cache/
+.tmp/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# local env
+.env
+.env.*.local

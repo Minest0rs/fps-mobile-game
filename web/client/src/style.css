@@ -1,0 +1,197 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #canvas-host { width: 100%; height: 100%; overflow: hidden; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #05060a;
+  color: #e6e9ef;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+
+#canvas-host { position: fixed; inset: 0; }
+/* Force the canvas to its host's CSS size; without this, three.js sizes the
+ * canvas drawing buffer to viewport*pixelRatio CSS px, which (on mobile with
+ * dpr > 1) makes the canvas wider than the viewport and shifts the rendered
+ * scene off-centre. */
+#canvas-host > canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.overlay {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 30%, rgba(50,90,180,0.25), rgba(5,6,10,0.92));
+  z-index: 10;
+}
+/* Landscape-friendly main menu: a wider card with two columns (Player +
+ * Match) so on phones held sideways everything fits without scrolling. */
+.menu-card {
+  width: min(720px, 96vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #11141d;
+  border: 1px solid #232838;
+  border-radius: 14px;
+  padding: 18px 22px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.menu-header {
+  display: flex; align-items: baseline; gap: 14px;
+  border-bottom: 1px solid #232838; padding-bottom: 10px;
+}
+.menu-cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+}
+.menu-col { display: flex; flex-direction: column; gap: 8px; }
+.menu-col h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; color: #8b93a7; margin-bottom: 4px; }
+.menu-col h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: #6c7488; margin-top: 4px; }
+.row-line { flex-direction: row !important; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
+.row-line.indent { padding-left: 12px; }
+.row-line input[type="number"] { width: 64px; padding: 6px 8px; }
+.row-line input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; width: 22px; height: 22px;
+  border: 1px solid #2c3142; background: #0c0f17; border-radius: 5px;
+  position: relative; cursor: pointer;
+}
+.row-line input[type="checkbox"]:checked { background: #2c5dff; border-color: #4c8bff; }
+.row-line input[type="checkbox"]:checked::after {
+  content: ""; position: absolute; left: 6px; top: 2px; width: 6px; height: 11px;
+  border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.menu-actions {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.menu-actions button.secondary {
+  background: linear-gradient(135deg, #2a3550, #1f2538);
+  border: 1px solid #2c3142;
+}
+.footer-hint { text-align: center; opacity: 0.7; }
+@media (max-width: 540px) and (orientation: portrait) {
+  .menu-cols { grid-template-columns: 1fr; }
+}
+
+h1 { font-size: 28px; letter-spacing: 0.06em; }
+.muted { color: #8b93a7; }
+.small { font-size: 12px; }
+.xsmall { font-size: 11px; line-height: 1.4; margin: 0 0 4px 0; }
+label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #b9c0d2; }
+input, select {
+  background: #0c0f17; color: #e6e9ef; border: 1px solid #232838;
+  border-radius: 8px; padding: 8px 10px; font-size: 14px;
+}
+button {
+  background: linear-gradient(135deg, #4c8bff, #2c5dff);
+  color: white; border: none; padding: 12px; border-radius: 10px;
+  font-size: 15px; cursor: pointer; font-weight: 600;
+}
+button:active { transform: scale(0.98); }
+.status { color: #ff8a8a; min-height: 18px; font-size: 13px; text-align: center; }
+
+.hidden { display: none !important; }
+
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+
+#crosshair {
+  position: absolute; left: 50%; top: 50%;
+  width: 22px; height: 22px; transform: translate(-50%,-50%);
+  pointer-events: none;
+}
+#crosshair::before, #crosshair::after {
+  content: ""; position: absolute; background: #fff;
+  box-shadow: 0 0 6px rgba(0,0,0,0.85);
+}
+#crosshair::before { left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); }
+#crosshair::after  { top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); }
+
+#hp-bar {
+  position: absolute; left: 16px; bottom: 16px;
+  width: 220px; height: 14px; background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,255,255,0.18); border-radius: 7px; overflow: hidden;
+}
+#hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #5dffa3, #2cd97a); transition: width 0.15s; }
+
+#oxygen-bar {
+  position: absolute; left: 16px; bottom: 38px;
+  width: 220px; height: 10px; background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,255,255,0.18); border-radius: 5px; overflow: hidden;
+}
+#oxygen-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #76d6ff, #2c9bd9); transition: width 0.1s; }
+
+#ammo { position: absolute; right: 16px; bottom: 16px; font-size: 22px; font-weight: 700; opacity: 0.85; }
+
+#kill-feed {
+  position: absolute; right: 16px; top: 16px; max-width: 320px;
+  font-size: 13px; line-height: 1.5; opacity: 0.95;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+}
+#kill-feed .row { background: rgba(0,0,0,0.45); padding: 4px 8px; border-radius: 4px; }
+#kill-feed .row .me { color: #ffd66e; font-weight: 700; }
+
+#scoreboard {
+  position: absolute; left: 50%; top: 12%; transform: translateX(-50%);
+  background: rgba(10,12,18,0.85); padding: 14px 22px; border-radius: 10px;
+  font-size: 14px; min-width: 280px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+#scoreboard table { width: 100%; border-collapse: collapse; }
+#scoreboard th, #scoreboard td { padding: 4px 10px; text-align: left; }
+#scoreboard th { color: #8b93a7; font-weight: 600; font-size: 12px; }
+#scoreboard tr.me td { color: #ffd66e; font-weight: 700; }
+
+#touch-controls { position: absolute; inset: 0; pointer-events: none; }
+.touch-only { display: none; }
+
+/* Dynamic joystick: the zone covers the full left half of the screen and
+   accepts the first touch; the visible base+handle then jump to that touch
+   point. The base is hidden until activated. */
+#joystick-zone {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 50%;
+  pointer-events: auto; touch-action: none;
+}
+#joystick-base {
+  position: absolute; left: 0; top: 0;
+  width: 140px; height: 140px; border-radius: 70px;
+  margin-left: -70px; margin-top: -70px;
+  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.18);
+  pointer-events: none;
+  opacity: 0; transition: opacity 80ms ease-out;
+}
+#joystick-base.active { opacity: 1; }
+#joystick-handle {
+  position: absolute; left: 50%; top: 50%; width: 60px; height: 60px;
+  margin-left: -30px; margin-top: -30px;
+  background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 30px;
+}
+#look-area {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 50%;
+  pointer-events: auto; touch-action: none;
+}
+.touch-button {
+  position: absolute; pointer-events: auto;
+  width: 90px; height: 90px; border-radius: 50%;
+  background: rgba(255,80,80,0.25); border: 2px solid rgba(255,80,80,0.6);
+  color: white; font-weight: 700; font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+}
+.touch-button.small { width: 60px; height: 60px; font-size: 11px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); }
+#fire-button { right: 28px; bottom: 90px; }
+/* Secondary fire on the left side, above the joystick anchor zone, so the
+   left thumb can shoot while the right thumb adjusts aim. */
+#fire-button-left { left: 28px; bottom: 220px; width: 78px; height: 78px; font-size: 13px; }
+#aim-button {
+  right: 130px; bottom: 28px;
+  background: rgba(255,210,90,0.22); border-color: rgba(255,210,90,0.7);
+  width: 78px; height: 78px; font-size: 14px;
+}
+#jump-button { right: 130px; bottom: 130px; background: rgba(120,180,255,0.25); border-color: rgba(120,180,255,0.6); }
+#scoreboard-button { right: 28px; top: 28px; }
+
+@media (pointer: coarse), (max-width: 800px) {
+  .touch-only { display: block; }
+}

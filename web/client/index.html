@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0d12" />
+  <title>Arena · Browser FPS</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="canvas-host"></div>
+
+  <div id="menu" class="overlay">
+    <div class="menu-card">
+      <div class="menu-header">
+        <h1>Arena</h1>
+        <p class="muted small" id="profile-line">Lv 1 · 0 XP</p>
+      </div>
+
+      <div class="menu-cols">
+        <!-- Player column: identity + loadout -->
+        <section class="menu-col">
+          <h2>Player</h2>
+          <label>Name <input id="name-input" maxlength="20" placeholder="Player" /></label>
+          <label>Skin
+            <select id="skin-select"></select>
+          </label>
+          <label>Weapon
+            <select id="weapon-select"></select>
+          </label>
+          <p class="muted small" id="weapon-line"></p>
+        </section>
+
+        <!-- Match column: bots + events + mode -->
+        <section class="menu-col">
+          <h2>Match</h2>
+          <label class="row-line">
+            <span>Bots</span>
+            <input type="checkbox" id="bots-enabled" />
+          </label>
+          <label class="row-line indent" id="bots-count-row">
+            <span>Bot count</span>
+            <input type="number" id="bots-count" min="0" max="8" value="3" />
+          </label>
+          <label class="row-line indent" id="bots-difficulty-row">
+            <span>Difficulty</span>
+            <select id="bots-difficulty">
+              <option value="easy">Easy</option>
+              <option value="normal" selected>Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <h3 class="muted small">Random events</h3>
+          <p class="muted xsmall">Enabled events trigger at random times during the match.</p>
+          <label class="row-line"><span>Night</span><input type="checkbox" id="ev-night" /></label>
+          <label class="row-line"><span>Low gravity</span><input type="checkbox" id="ev-lowgrav" /></label>
+          <label class="row-line"><span>Meteor shower</span><input type="checkbox" id="ev-meteor" /></label>
+          <label class="row-line"><span>Fog</span><input type="checkbox" id="ev-fog" /></label>
+          <label class="row-line"><span>Thunderstorm</span><input type="checkbox" id="ev-storm" /></label>
+          <label class="row-line"><span>Sandstorm</span><input type="checkbox" id="ev-sand" /></label>
+        </section>
+      </div>
+
+      <div class="menu-actions">
+        <button id="find-match" class="secondary">Find Match</button>
+        <button id="create-match">Create Match</button>
+      </div>
+      <p class="status" id="status"></p>
+      <p class="muted small footer-hint">Desktop: WASD + mouse, click to shoot, Space to jump · Mobile: left joystick + fire / aim buttons</p>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="hp-bar"><div id="hp-fill"></div></div>
+    <div id="oxygen-bar" class="hidden"><div id="oxygen-fill"></div></div>
+    <div id="ammo">∞</div>
+    <div id="kill-feed"></div>
+    <div id="scoreboard" class="hidden"></div>
+
+    <div id="touch-controls" class="touch-only">
+      <!-- Big invisible zone on the left half of the screen: tapping anywhere
+           in here anchors the joystick at the touch point (dynamic joystick). -->
+      <div id="joystick-zone"></div>
+      <div id="joystick-base"><div id="joystick-handle"></div></div>
+      <div id="look-area"></div>
+      <button id="fire-button" class="touch-button">FIRE</button>
+      <!-- Secondary fire button on the left so the user can shoot with their
+           left thumb while moving / aiming with the right. -->
+      <button id="fire-button-left" class="touch-button">FIRE</button>
+      <button id="aim-button" class="touch-button">AIM</button>
+      <button id="jump-button" class="touch-button">JUMP</button>
+      <button id="scoreboard-button" class="touch-button small">SCORE</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
