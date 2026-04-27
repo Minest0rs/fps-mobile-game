@@ -72,6 +72,8 @@ export function spawnTracer(
   camera: THREE.Camera,
   from: THREE.Vector3,
   to: THREE.Vector3,
+  color = 0xfff1a5,
+  width = 0.12,
 ) {
   const delta = new THREE.Vector3().subVectors(to, from);
   const length = delta.length();
@@ -83,7 +85,7 @@ export function spawnTracer(
   // side points at the camera each frame (we orient once at spawn — for
   // the brief lifetime that's visually indistinguishable from continuous
   // billboarding and is much cheaper).
-  const beamGeom = new THREE.PlaneGeometry(0.12, 1);
+  const beamGeom = new THREE.PlaneGeometry(width, 1);
   // Orient: long axis (Y) along the shot, short axis (X) perpendicular to
   // both shot dir and the camera->shot vector — always pointing at the
   // camera as long as the shot is roughly perpendicular to that view.
@@ -92,7 +94,7 @@ export function spawnTracer(
   const facing = new THREE.Vector3().crossVectors(sideways, dir).normalize();
   const m4 = new THREE.Matrix4().makeBasis(sideways, dir, facing);
   const beamMat = new THREE.MeshBasicMaterial({
-    color: 0xfff1a5, transparent: true, opacity: 0.95,
+    color, transparent: true, opacity: 0.95,
     blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
     side: THREE.DoubleSide,
   });

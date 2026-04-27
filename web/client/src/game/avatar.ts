@@ -107,6 +107,16 @@ export class Avatar {
     this.gun.rotation.set(pitch, 0, 0);
   }
 
+  /** World-space position of the visible barrel tip after the gun has been
+   *  rotated by setAimTarget. We use this as the spawn point for tracers so
+   *  bullets visually emerge from the *actual* barrel tip — not from a
+   *  yaw-only approximation that diverges when the player looks up or down. */
+  getBarrelTipWorld(out = new THREE.Vector3()): THREE.Vector3 {
+    this.gun.updateMatrixWorld(true);
+    // Local barrel tip Z (matches the visual barrel mesh in this file).
+    return out.set(0, 0.02, -0.99).applyMatrix4(this.gun.matrixWorld);
+  }
+
   /** Aim the gun (and its laser) at a specific world point so the visual
    *  barrel direction converges with where the camera-centred crosshair is
    *  looking. Used for the local player only — remote avatars use the

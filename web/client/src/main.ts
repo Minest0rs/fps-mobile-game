@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import type { Room } from "colyseus.js";
 import { joinArena, type ArenaStateLike, type PlayerState } from "./net/client";
+import { getWeapon } from "./weapons";
+import { applyMatchEvents, createEventCtx, type MatchEvents as ClientMatchEvents } from "./game/events";
 import { createScene } from "./game/scene";
 import { Avatar } from "./game/avatar";
 import { LocalController } from "./game/controller";
@@ -25,8 +27,10 @@ const input = new InputManager(refs.renderer.domElement, {
   scoreboardButton: document.getElementById("scoreboard-button")!,
 });
 
-const magazineSize = 30;
-let magazine = magazineSize;
+// Active weapon, set when the user joins the room. Defaults to rifle so any
+// pre-join code paths still have a sensible weapon definition.
+let weapon = getWeapon("rifle");
+let magazine = weapon.magSize;
 
 // Default aim-convergence distance (used only when the camera ray doesn't
 // hit any world geometry within range — e.g. when looking at the sky).
@@ -56,16 +60,28 @@ refs.scene.add(localAvatar.group);
 // FOV transition is driven by the controller's aimBlend so camera distance,
 // shoulder offset, look-sensitivity, and FOV all blend in lockstep.
 
+// Match-events context (night, fog, meteor shower, low gravity). Initialised
+// after the scene is built so we can snapshot the original light intensities.
+const eventCtx = createEventCtx(refs.scene);
+const eventState: ClientMatchEvents = { night: false, lowGravity: false, meteorShower: false, fog: false };
+
 let room: Room<ArenaStateLike> | null = null;
 const avatars = new Map<string, Avatar>();
 const tracers: Array<(dt: number) => boolean> = [];
 let lastShotAt = 0;
-const shotIntervalMs = 110;
 
-const menu = setupMenu(async ({ name, skin }) => {
+const menu = setupMenu(async ({ name, skin, weapon: weaponId, createMatch, match }) => {
   menu.setStatus("Connecting…");
   try {
-    room = await joinArena(name, skin);
+    weapon = getWeapon(weaponId);
+    magazine = weapon.magSize;
+    hud.setMagazine(magazine);
+    localAvatar.setSkin(skin);
+    room = await joinArena({
+      name, skin, weapon: weaponId, createMatch,
+      bots: match.bots,
+      events: match.events,
+    });
     bindRoom(room);
     document.getElementById("hud")!.classList.remove("hidden");
     menu.hide();
@@ -197,6 +213,16 @@ function frame(now: number) {
   // shadows render correctly across the whole 600 m map.
   refs.followSun(controller.position.x, controller.position.z);
 
+  // Pull the match events from the room state and apply diffs once per
+  // frame so toggle-on/off are idempotent.
+  if (room?.state?.events) {
+    eventState.night = !!room.state.events.night;
+    eventState.lowGravity = !!room.state.events.lowGravity;
+    eventState.meteorShower = !!room.state.events.meteorShower;
+    eventState.fog = !!room.state.events.fog;
+  }
+  applyMatchEvents(eventState, eventCtx, refs, controller, dt);
+
   if (i.toggleScoreboard) hud.toggleScoreboard();
 
   // Aim-down-sights: FOV and laser-sight track the controller's aim blend.
@@ -207,19 +233,29 @@ function frame(now: number) {
   refs.camera.updateProjectionMatrix();
   localAvatar.setLaserVisible(aimAmt > 0.1);
 
-  // Shooting (no firing while dead)
-  if (alive && i.fireHeld && !reloading && magazine > 0 && performance.now() - lastShotAt > shotIntervalMs) {
+  // Shooting (no firing while dead). Cadence and pellet count come from
+  // the active weapon, so swapping rifle ↔ shotgun ↔ sniper changes the
+  // feel of every trigger pull.
+  if (alive && i.fireHeld && !reloading && magazine > 0 && performance.now() - lastShotAt > weapon.fireRateMs) {
     lastShotAt = performance.now();
     magazine -= 1;
     hud.setMagazine(magazine);
-    // Bullet ray runs from the gun barrel to the convergent aim point, so
-    // the visible tracer matches the laser direction exactly.
-    const muzzle = controller.getMuzzlePosition();
-    const bulletDir = aimTargetScratch.clone().sub(muzzle).normalize();
-    const result = aim(muzzle, bulletDir, avatars);
-    tracers.push(spawnTracer(refs.scene, refs.camera, muzzle, result.point));
-    if (room && result.targetId) {
-      room.send("shoot", { targetId: result.targetId });
+    // Spawn tracer from the *visible* barrel tip (rotated by the convergent
+    // aim) so the user sees bullets fly from where their gun is pointing,
+    // not from a yaw-only approximation behind/below the actual barrel.
+    const muzzle = localAvatar.getBarrelTipWorld();
+    const baseDir = aimTargetScratch.clone().sub(muzzle).normalize();
+    // Shotguns fire several pellets in a cone; rifles/snipers fire one
+    // perfectly along the camera ray.
+    const reportedTargets = new Set<string>();
+    for (let pellet = 0; pellet < weapon.pellets; pellet++) {
+      const dir = weapon.spread > 0 ? jitterDir(baseDir, weapon.spread) : baseDir;
+      const result = aim(muzzle, dir, avatars, weapon.maxRange);
+      tracers.push(spawnTracer(refs.scene, refs.camera, muzzle, result.point, weapon.tracerColor, weapon.tracerWidth));
+      if (room && result.targetId && !reportedTargets.has(result.targetId)) {
+        reportedTargets.add(result.targetId);
+        room.send("shoot", { targetId: result.targetId });
+      }
     }
     if (magazine === 0) startReload();
   }
@@ -239,10 +275,25 @@ function startReload() {
   reloading = true;
   hud.setMagazine(0);
   setTimeout(() => {
-    magazine = magazineSize;
+    magazine = weapon.magSize;
     reloading = false;
     hud.setMagazine(magazine);
-  }, reloadDuration * 1000);
+  }, weapon.reloadMs);
+}
+
+/** Returns a unit vector close to `dir` rotated by a random offset within
+ *  a cone of half-angle `spread` (radians). Used by the shotgun. */
+function jitterDir(dir: THREE.Vector3, spread: number): THREE.Vector3 {
+  // Build an orthonormal basis around dir, then offset within the disk.
+  const up = Math.abs(dir.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  const right = new THREE.Vector3().crossVectors(dir, up).normalize();
+  const u = new THREE.Vector3().crossVectors(right, dir).normalize();
+  const ang = Math.random() * Math.PI * 2;
+  const r = Math.sqrt(Math.random()) * spread;
+  return dir.clone()
+    .addScaledVector(right, Math.cos(ang) * r)
+    .addScaledVector(u, Math.sin(ang) * r)
+    .normalize();
 }
 
 function isTouchDevice(): boolean {

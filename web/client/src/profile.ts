@@ -9,9 +9,10 @@ export interface Profile {
   skin: string;
   level: number;
   xp: number;
+  weapon?: string;
 }
 
-const DEFAULT: Profile = { name: "Player", skin: "neon", level: 1, xp: 0 };
+const DEFAULT: Profile = { name: "Player", skin: "neon", level: 1, xp: 0, weapon: "rifle" };
 
 export const SKINS: Record<string, { color: number; emissive: number; unlock: number; label: string }> = {
   neon:    { color: 0x4cffd6, emissive: 0x114433, unlock: 0, label: "Neon" },

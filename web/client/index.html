@@ -11,22 +11,59 @@
   <div id="canvas-host"></div>
 
   <div id="menu" class="overlay">
-    <div class="card">
-      <h1>Arena</h1>
-      <p class="muted">3D multiplayer browser FPS</p>
-      <label>Name <input id="name-input" maxlength="20" placeholder="Player" /></label>
-      <label>Skin
-        <select id="skin-select">
-          <option value="neon">Neon (Lv 0)</option>
-          <option value="crimson">Crimson (Lv 0)</option>
-          <option value="cyber">Cyber (Lv 2)</option>
-          <option value="gold">Gold (Lv 5)</option>
-        </select>
-      </label>
-      <p class="muted small" id="profile-line">Lv 1 · 0 XP</p>
-      <button id="play-button">Play</button>
+    <div class="menu-card">
+      <div class="menu-header">
+        <h1>Arena</h1>
+        <p class="muted small" id="profile-line">Lv 1 · 0 XP</p>
+      </div>
+
+      <div class="menu-cols">
+        <!-- Player column: identity + loadout -->
+        <section class="menu-col">
+          <h2>Player</h2>
+          <label>Name <input id="name-input" maxlength="20" placeholder="Player" /></label>
+          <label>Skin
+            <select id="skin-select"></select>
+          </label>
+          <label>Weapon
+            <select id="weapon-select"></select>
+          </label>
+          <p class="muted small" id="weapon-line"></p>
+        </section>
+
+        <!-- Match column: bots + events + mode -->
+        <section class="menu-col">
+          <h2>Match</h2>
+          <label class="row-line">
+            <span>Bots</span>
+            <input type="checkbox" id="bots-enabled" />
+          </label>
+          <label class="row-line indent" id="bots-count-row">
+            <span>Bot count</span>
+            <input type="number" id="bots-count" min="0" max="8" value="3" />
+          </label>
+          <label class="row-line indent" id="bots-difficulty-row">
+            <span>Difficulty</span>
+            <select id="bots-difficulty">
+              <option value="easy">Easy</option>
+              <option value="normal" selected>Normal</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <h3 class="muted small">Events</h3>
+          <label class="row-line"><span>Night</span><input type="checkbox" id="ev-night" /></label>
+          <label class="row-line"><span>Low gravity</span><input type="checkbox" id="ev-lowgrav" /></label>
+          <label class="row-line"><span>Meteor shower</span><input type="checkbox" id="ev-meteor" /></label>
+          <label class="row-line"><span>Fog</span><input type="checkbox" id="ev-fog" /></label>
+        </section>
+      </div>
+
+      <div class="menu-actions">
+        <button id="find-match" class="secondary">Find Match</button>
+        <button id="create-match">Create Match</button>
+      </div>
       <p class="status" id="status"></p>
-      <p class="muted small">Desktop: WASD + mouse, click to shoot, Space to jump.<br/>Mobile: left joystick, right drag to look, fire button.</p>
+      <p class="muted small footer-hint">Desktop: WASD + mouse, click to shoot, Space to jump · Mobile: left joystick + fire / aim buttons</p>
     </div>
   </div>
 

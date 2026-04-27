@@ -254,24 +254,30 @@ function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[
     new THREE.MeshStandardMaterial({ color: 0x3d5a2c, roughness: 0.98 }),
   );
   outer.rotation.x = -Math.PI / 2;
-  outer.position.y = -0.5;
+  // Push the outer landscape well below the deepest river point (-6 m) so
+  // it can never poke up through the translucent water plane and show as
+  // a green smear over the river. From the cliff edge it's still visible
+  // far in the distance as a hazy ring.
+  outer.position.y = -12;
   outer.receiveShadow = true;
   addSolid(outer);
 
-  // River water — wide blue translucent ribbon along z = 0 sitting just
-  // below the surrounding ground. Surface at y = -1.0 so the river reads as
-  // ~5 m deep and the water plane is visible from any approach angle.
+  // River water — fully opaque clear-blue ribbon along z = 0. We trade a
+  // little visual depth for a clean look: any translucency lets the green
+  // distant hills / outer landscape bleed through and reads to the player
+  // as a "green smear above the water". Opaque + roughness near 1 +
+  // metalness 0 keeps the surface a flat blue regardless of view angle.
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(half * 1.7, 70),
     new THREE.MeshStandardMaterial({
-      color: 0x1f5d8f, roughness: 0.18, metalness: 0.2,
-      transparent: true, opacity: 0.82,
+      color: 0x1d4f7a, roughness: 0.78, metalness: 0.0,
+      transparent: false, opacity: 1.0,
       side: THREE.DoubleSide,
     }),
   );
   water.rotation.x = -Math.PI / 2;
   water.position.set(0, -1.0, 0);
-  water.renderOrder = 1; // draw on top of opaque terrain
+  water.renderOrder = 2; // draw above any nearby translucent grass
   scene.add(water);
 
   // Distant decorative hills — green forested mounds beyond the play area.
@@ -303,8 +309,11 @@ function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[
     const z = (gRng() * 2 - 1) * (half - 1);
     if (x * x + z * z < 9) { i--; continue; } // not on the centre pillar
     const gy = terrainHeight(x, z, half);
-    // Skip the river bed and high mountain rock — grass doesn't grow there.
-    if (gy < -0.5) { i--; continue; }
+    // Keep grass well above the waterline. Anything below ~+0.3 risks
+    // poking up through the river plane (water surface y = -1, banks
+    // can dip to y = -0.4 within the gaussian falloff) and reading as a
+    // mysterious green smear above the water. Also skip the high rock.
+    if (gy < 0.3) { i--; continue; }
     if (gy > 35) { i--; continue; }
     dummy.position.set(x, gy + 0.35, z);
     dummy.rotation.set(0, gRng() * Math.PI, 0);

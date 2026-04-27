@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { InputManager } from "./input";
 import type { Obstacles } from "./scene";
 
-const GRAVITY = -22;
+const DEFAULT_GRAVITY = -22;
 const JUMP_VELOCITY = 8.0;
 const MOVE_SPEED = 6.0;
 const PITCH_LIMIT = 1.1;
@@ -35,6 +35,8 @@ export class LocalController {
   pitch = 0;
   /** Blend toward 1 while ADS is held; smoothed in update(). */
   aimBlend = 0;
+  /** Mutable gravity so match-events (low gravity) can swap it at runtime. */
+  gravity = DEFAULT_GRAVITY;
   private velocityY = 0;
   private grounded = true;
 
@@ -85,7 +87,7 @@ export class LocalController {
       this.grounded = false;
     }
 
-    this.velocityY += GRAVITY * dt;
+    this.velocityY += this.gravity * dt;
     const dy = this.velocityY * dt;
 
     // Move on each horizontal axis separately so the player slides along
