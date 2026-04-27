@@ -1,6 +1,13 @@
 import * as THREE from "three";
 import { SKINS } from "../profile";
 
+// Reusable scratch buffers for setAimTarget — kept at module scope to avoid
+// per-frame allocation on the local avatar's hot path.
+const _gunWorldPos = new THREE.Vector3();
+const _aimMat = new THREE.Matrix4();
+const _aimWorldQ = new THREE.Quaternion();
+const _aimParentQ = new THREE.Quaternion();
+
 /**
  * Visual representation of a remote player: a capsule body, a small head, and a
  * simple "weapon" wedge that tracks the player's yaw + pitch. Skin determines colour.
@@ -120,14 +127,26 @@ export class Avatar {
   /** Aim the gun (and its laser) at a specific world point so the visual
    *  barrel direction converges with where the camera-centred crosshair is
    *  looking. Used for the local player only — remote avatars use the
-   *  replicated yaw/pitch directly via setPose(). */
+   *  replicated yaw/pitch directly via setPose().
+   *
+   *  IMPORTANT: Three.js's `Object3D.lookAt` orients local +Z toward the
+   *  target for non-camera objects (cameras and lights face -Z). Our gun's
+   *  barrel mesh sits at local -Z, so calling `gun.lookAt(target)` would
+   *  flip the barrel 180° to point AWAY from the target — exactly the
+   *  "weapon points wrong direction" bug players reported. Build the
+   *  rotation manually using Matrix4.lookAt(eye, target, up), which gives
+   *  a -Z-facing world quaternion, then convert to local space. */
   setAimTarget(target: THREE.Vector3) {
-    // Object3D.lookAt aligns the local -Z axis with the target. The gun's
-    // local -Z is the barrel forward (matches the laser direction), so this
-    // is exactly what we want. Parent transform (group rotation) is taken
-    // into account, so we don't need to manually invert the player's yaw.
     this.group.updateMatrixWorld(true);
-    this.gun.lookAt(target);
+    this.gun.getWorldPosition(_gunWorldPos);
+    _aimMat.lookAt(_gunWorldPos, target, this.gun.up);
+    _aimWorldQ.setFromRotationMatrix(_aimMat);
+    if (this.gun.parent) {
+      this.gun.parent.getWorldQuaternion(_aimParentQ);
+      this.gun.quaternion.copy(_aimParentQ.invert().multiply(_aimWorldQ));
+    } else {
+      this.gun.quaternion.copy(_aimWorldQ);
+    }
   }
 
   setLaserVisible(v: boolean) {

@@ -67,9 +67,10 @@ export function applyMatchEvents(
     if (ctx.ambient) ctx.ambient.intensity = events.night ? ctx.origAmbient * 0.18 : ctx.origAmbient;
     if (ctx.sun) ctx.sun.intensity = events.night ? ctx.origSun * 0.20 : ctx.origSun;
     if (ctx.sun) ctx.sun.color.setHex(events.night ? 0x6f8aff : 0xfff1d1);
-    refs.scene.background = events.night
-      ? new THREE.Color(0x07091a)
-      : refs.scene.background; // sky shader stays on; we just darken bg if used.
+    // Restore to null when night ends so the Sky mesh renders the daytime
+    // sky again. Self-assigning would leave the dark background in place
+    // permanently (Devin Review BUG_0001).
+    refs.scene.background = events.night ? new THREE.Color(0x07091a) : null;
   }
 
   // --- Fog (heavier than the default haze) ---

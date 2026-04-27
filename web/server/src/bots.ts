@@ -1,11 +1,17 @@
 import { ArenaState, Player } from "./state.js";
 import { WEAPONS, getWeapon } from "./weapons.js";
 
-/** Difficulty profile applied to bots at spawn time. */
+/** Difficulty profile applied to bots at spawn time.
+ *  - `hitChance` is the per-shot probability of actually applying damage
+ *    (0 = always misses, 1 = always hits). Tuned so even Hard bots are
+ *    ambient pressure rather than instant-death turrets.
+ *  - `fireDelayMs` is added on top of the weapon's natural fire-rate as a
+ *    "reaction time" gap between bot shots.
+ *  - `hp` and `speed` shape how much of a fight each bot puts up. */
 const DIFFICULTY = {
-  easy:   { aimError: 0.30, fireDelayMs: 900, hp: 80,  speed: 4.0 },
-  normal: { aimError: 0.18, fireDelayMs: 600, hp: 100, speed: 4.8 },
-  hard:   { aimError: 0.08, fireDelayMs: 350, hp: 120, speed: 5.6 },
+  easy:   { hitChance: 0.10, fireDelayMs: 1800, hp: 50, speed: 3.2 },
+  normal: { hitChance: 0.20, fireDelayMs: 1300, hp: 70, speed: 4.0 },
+  hard:   { hitChance: 0.35, fireDelayMs:  900, hp: 90, speed: 4.8 },
 } as const;
 
 export type BotDifficulty = keyof typeof DIFFICULTY;
@@ -40,7 +46,7 @@ export function spawnBots(
     const wIds = Object.keys(WEAPONS);
     bot.weapon = wIds[i % wIds.length];
     bot.hp = profile.hp;
-    bot.botSkill = profile.aimError;
+    bot.botSkill = profile.hitChance;
     const sp = spawnPoint();
     bot.x = sp.x; bot.y = sp.y; bot.z = sp.z;
     bot.botTargetX = sp.x;
@@ -119,16 +125,28 @@ export function tickBots(
       bot.x = clamp(bot.x, -arenaHalf, arenaHalf);
       bot.z = clamp(bot.z, -arenaHalf, arenaHalf);
     }
-    // Always face the target.
-    bot.yaw = Math.atan2(dx, dz);
+    // Always face the target. The avatar's forward in this codebase is
+    // `(-sin(yaw), 0, -cos(yaw))` (matches `controller.ts` and the gun's
+    // local -Z), so to face direction `(dx, dz)` we need `atan2(-dx, -dz)`.
+    // Using `atan2(dx, dz)` would point the avatar 180° away from the
+    // target (Devin Review BUG_0003).
+    bot.yaw = Math.atan2(-dx, -dz);
 
     // Fire if the target is within weapon range and our cooldown is up.
     const w = getWeapon(bot.weapon);
     const cooldown = Math.max(w.fireRateMs, profile.fireDelayMs);
     if (dist < w.maxRange && now - bot.lastShotAt > cooldown) {
-      // Random miss chance based on aimError — bots aren't perfect.
-      if (Math.random() > profile.aimError) {
-        events.push({ attackerId: bot.id, victimId: target.id, damage: w.damage });
+      // Most bot shots miss. We also bleed off accuracy with distance so
+      // bots feel weaker the further you are from them — important for
+      // making the open 600 m arena playable against AI.
+      const distFalloff = Math.max(0, 1 - dist / Math.max(40, w.maxRange));
+      const effectiveChance = profile.hitChance * (0.4 + 0.6 * distFalloff);
+      if (Math.random() < effectiveChance) {
+        // Bot damage is also reduced — weapon damage is calibrated for
+        // human aim (single targeted shot per click), and a bot shooting
+        // at human cadence at full damage feels overwhelming.
+        const dmg = Math.max(4, Math.round(w.damage * 0.5));
+        events.push({ attackerId: bot.id, victimId: target.id, damage: dmg });
       }
       bot.lastShotAt = now;
     }

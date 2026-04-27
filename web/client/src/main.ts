@@ -246,15 +246,21 @@ function frame(now: number) {
     const muzzle = localAvatar.getBarrelTipWorld();
     const baseDir = aimTargetScratch.clone().sub(muzzle).normalize();
     // Shotguns fire several pellets in a cone; rifles/snipers fire one
-    // perfectly along the camera ray.
-    const reportedTargets = new Set<string>();
+    // perfectly along the camera ray. Each pellet that hits a target needs
+    // its own `shoot` message so the server applies damage per pellet —
+    // deduplicating to one message per target would cap the shotgun at a
+    // single pellet's damage even on a point-blank hit (Devin Review
+    // BUG_0002).
+    const pelletHits: Record<string, number> = {};
     for (let pellet = 0; pellet < weapon.pellets; pellet++) {
       const dir = weapon.spread > 0 ? jitterDir(baseDir, weapon.spread) : baseDir;
       const result = aim(muzzle, dir, avatars, weapon.maxRange);
       tracers.push(spawnTracer(refs.scene, refs.camera, muzzle, result.point, weapon.tracerColor, weapon.tracerWidth));
-      if (room && result.targetId && !reportedTargets.has(result.targetId)) {
-        reportedTargets.add(result.targetId);
-        room.send("shoot", { targetId: result.targetId });
+      if (result.targetId) pelletHits[result.targetId] = (pelletHits[result.targetId] ?? 0) + 1;
+    }
+    if (room) {
+      for (const [targetId, count] of Object.entries(pelletHits)) {
+        for (let n = 0; n < count; n++) room.send("shoot", { targetId });
       }
     }
     if (magazine === 0) startReload();
