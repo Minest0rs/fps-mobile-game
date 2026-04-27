@@ -5,8 +5,10 @@ import type { Obstacles } from "./scene";
 const GRAVITY = -22;
 const JUMP_VELOCITY = 8.0;
 const MOVE_SPEED = 6.0;
-const PITCH_LIMIT = 1.4;
+const PITCH_LIMIT = 1.1;
 const PLAYER_RADIUS = 0.45;
+// Third-person camera offset.
+const CAM_DIST = 4.5;
 
 /**
  * Owns the local player camera and emits movement updates. Movement is computed
@@ -88,11 +90,29 @@ export class LocalController {
     if (this.position.z > lim) this.position.z = lim;
     if (this.position.z < -lim) this.position.z = -lim;
 
-    this.camera.position.copy(this.position);
-    const e = new THREE.Euler(this.pitch, this.yaw, 0, "YXZ");
-    this.camera.quaternion.setFromEuler(e);
+    // Third-person camera: orbit a fixed distance behind the player along the
+    // yaw axis, tilted by pitch. Look at the player's head.
+    const cosP = Math.cos(this.pitch);
+    const sinP = Math.sin(this.pitch);
+    const cx = this.position.x + CAM_DIST * Math.sin(this.yaw) * cosP;
+    const cy = this.position.y - CAM_DIST * sinP;
+    const cz = this.position.z + CAM_DIST * Math.cos(this.yaw) * cosP;
+    this.camera.position.set(cx, cy, cz);
+    this.camera.lookAt(this.position.x, this.position.y, this.position.z);
 
     return true;
+  }
+
+  /** Where bullets/rays should originate (player's head, in front of avatar). */
+  getMuzzlePosition(): THREE.Vector3 {
+    // Slightly in front of the player so tracers don't visibly start inside
+    // the avatar's body.
+    const f = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    return new THREE.Vector3(
+      this.position.x + f.x * 0.6,
+      this.position.y + 0.05,
+      this.position.z + f.z * 0.6,
+    );
   }
 
   /** Push the player out of any horizontal obstacle they overlap. */

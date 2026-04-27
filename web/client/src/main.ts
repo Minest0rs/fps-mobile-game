@@ -32,6 +32,12 @@ hud.setMagazine(magazine);
 
 const controller = new LocalController(refs.camera, refs.arenaHalf, refs.obstacles);
 
+// Local player avatar — visible to the local player in third-person view.
+// Kept out of `avatars` so it isn't tested as a hit target.
+const localAvatar = new Avatar("You", load().skin);
+localAvatar.setVisible(true);
+refs.scene.add(localAvatar.group);
+
 let room: Room<ArenaStateLike> | null = null;
 const avatars = new Map<string, Avatar>();
 const tracers: Array<(dt: number) => boolean> = [];
@@ -112,6 +118,8 @@ function frame(now: number) {
     if (me) {
       hud.setHp(me.hp);
       alive = me.hp > 0;
+      localAvatar.setVisible(alive);
+      localAvatar.setSkin(me.skin);
       if (alive) {
         // Push position to server every frame; server clamps and reflects state.
         room.send("move", {
@@ -125,6 +133,14 @@ function frame(now: number) {
     }
     hud.refreshScoreboard(room.state);
   }
+  // Sync the local avatar to the controller every frame.
+  localAvatar.setPose(
+    controller.position.x,
+    controller.position.y,
+    controller.position.z,
+    controller.yaw,
+    controller.pitch,
+  );
 
   if (i.toggleScoreboard) hud.toggleScoreboard();
 
@@ -134,7 +150,7 @@ function frame(now: number) {
     magazine -= 1;
     hud.setMagazine(magazine);
     const result = aim(refs.camera, avatars);
-    tracers.push(spawnTracer(refs.scene, refs.camera, refs.camera.position.clone(), result.point));
+    tracers.push(spawnTracer(refs.scene, refs.camera, controller.getMuzzlePosition(), result.point));
     if (room && result.targetId) {
       room.send("shoot", { targetId: result.targetId });
     }
