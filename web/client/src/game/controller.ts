@@ -126,9 +126,17 @@ export class LocalController {
     const rx = Math.cos(this.yaw);
     const rz = -Math.sin(this.yaw);
     const cx = this.position.x + camDist * Math.sin(this.yaw) * cosP + shoulder * rx;
-    // Don't let an aggressive look-up push the camera through the floor.
-    const cy = Math.max(0.6, this.position.y + heightOffset - camDist * sinP);
     const cz = this.position.z + camDist * Math.cos(this.yaw) * cosP + shoulder * rz;
+    // Don't let the camera duck beneath the terrain at its own (x, z).
+    // Using a fixed lower bound (e.g. 0.6) breaks pitch when the player is
+    // standing in a depression below y = 0 — like the river — because the
+    // camera would clamp above the player's head and pitch input wouldn't
+    // move the view at all.
+    const camGround = this.heightAt(cx, cz);
+    const cy = Math.max(
+      camGround + 0.4,
+      this.position.y + heightOffset - camDist * sinP,
+    );
     this.camera.position.set(cx, cy, cz);
     this.camera.lookAt(
       this.position.x + shoulder * rx,

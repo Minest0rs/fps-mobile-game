@@ -19,6 +19,10 @@ export interface SceneRefs {
   getBaseFov: () => number;
   /** Re-position the sun so its shadow camera tracks the active player. */
   followSun: (playerX: number, playerZ: number) => void;
+  /** World meshes the aim raycaster should consider (terrain + obstacles).
+   *  Used to find the actual point the camera crosshair is pointing at so
+   *  bullet trajectories can converge there at any range, not just 30 m. */
+  aimMeshes: THREE.Object3D[];
 }
 
 /** Smoothly varying ground height. Kept identical between the visual ground
@@ -50,11 +54,13 @@ export function terrainHeight(x: number, z: number, half: number): number {
   // Wide gaussian for a smooth, walkable mountain.
   const mountain = Math.exp(-(md * md) / (90 * 90)) * 55;
 
-  // 3. River — a shallow trough centred at z = 0, gradually carved.
-  //    Skip the river inside the spawn flat to keep the spawn area solid.
-  const riverWidth = 18;
+  // 3. River — a deep, wide blue trough along z = 0. The bed sits 6 m below
+  //    surrounding ground; tapers to flat ground over ±30 m on either side.
+  //    Made deep + wide enough that the water mesh is clearly visible from
+  //    any approach angle.
+  const riverWidth = 26;
   const riverFactor = Math.exp(-(z * z) / (riverWidth * riverWidth));
-  const river = -3.5 * riverFactor;
+  const river = -6 * riverFactor;
 
   // 4. Rolling hills (always-on background).
   const hills =
@@ -143,7 +149,8 @@ export function createScene(host: HTMLElement): SceneRefs {
   }
 
   const arenaHalf = 300;
-  const obstacles = buildArena(scene, arenaHalf);
+  const aimMeshes: THREE.Object3D[] = [];
+  const obstacles = buildArena(scene, arenaHalf, aimMeshes);
   const heightAt = (x: number, z: number) => terrainHeight(x, z, arenaHalf);
 
   const TARGET_HFOV_DEG = 100; // wide enough to feel like a real FPS
@@ -173,11 +180,14 @@ export function createScene(host: HTMLElement): SceneRefs {
     sun.position.copy(sunDir).multiplyScalar(80).add(sun.target.position);
   };
 
-  return { scene, camera, renderer, arenaHalf, obstacles, heightAt, getBaseFov: () => baseFov, followSun };
+  return { scene, camera, renderer, arenaHalf, obstacles, heightAt, getBaseFov: () => baseFov, followSun, aimMeshes };
 }
 
-function buildArena(scene: THREE.Scene, half: number): Obstacles {
+function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[]): Obstacles {
   const obstacles: Obstacles = { boxes: [], cylinders: [] };
+  // Helper that mirrors scene.add for solid meshes the aim raycaster should
+  // consider. Skipped for water, grass tufts, and decorative far hills.
+  const addSolid = (mesh: THREE.Object3D) => { scene.add(mesh); aimMeshes.push(mesh); };
 
   // Ground — vertex-coloured grass with real height variation. The same
   // terrainHeight() function is queried by the controller, so the player
@@ -200,7 +210,10 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     // a richer green, mountain peaks rocky grey-brown.
     const t = cRng();
     let r: number, g: number, b: number;
-    if (h < -1.5) {
+    if (h < -2.0) {
+      // River bed — muddy blue-brown. Underwater so it reads as river floor.
+      r = 0.30 + t * 0.06; g = 0.32 + t * 0.06; b = 0.32 + t * 0.06;
+    } else if (h < -0.4) {
       // River bank — wet sand tone.
       r = 0.55 + t * 0.10; g = 0.50 + t * 0.08; b = 0.40 + t * 0.08;
     } else if (h > 25) {
@@ -229,7 +242,7 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   const ground = new THREE.Mesh(groundGeom, groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
-  scene.add(ground);
+  addSolid(ground);
 
   // Outer "landscape" — a much larger ground plane beyond the cliff ring so
   // the horizon doesn't end at the arena bounds. Constant low height (just
@@ -243,20 +256,22 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.5;
   outer.receiveShadow = true;
-  scene.add(outer);
+  addSolid(outer);
 
-  // River water — a long blue translucent ribbon along z = 0 sitting just
-  // below the river-bed depression in the terrain.
+  // River water — wide blue translucent ribbon along z = 0 sitting just
+  // below the surrounding ground. Surface at y = -1.0 so the river reads as
+  // ~5 m deep and the water plane is visible from any approach angle.
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(half * 1.7, 28),
+    new THREE.PlaneGeometry(half * 1.7, 70),
     new THREE.MeshStandardMaterial({
-      color: 0x2f7fc4, roughness: 0.25, metalness: 0.4,
-      transparent: true, opacity: 0.78,
+      color: 0x1f5d8f, roughness: 0.18, metalness: 0.2,
+      transparent: true, opacity: 0.82,
+      side: THREE.DoubleSide,
     }),
   );
   water.rotation.x = -Math.PI / 2;
-  water.position.set(0, -2.6, 0);
-  water.receiveShadow = true;
+  water.position.set(0, -1.0, 0);
+  water.renderOrder = 1; // draw on top of opaque terrain
   scene.add(water);
 
   // Distant decorative hills — green forested mounds beyond the play area.
@@ -288,6 +303,9 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     const z = (gRng() * 2 - 1) * (half - 1);
     if (x * x + z * z < 9) { i--; continue; } // not on the centre pillar
     const gy = terrainHeight(x, z, half);
+    // Skip the river bed and high mountain rock — grass doesn't grow there.
+    if (gy < -0.5) { i--; continue; }
+    if (gy > 35) { i--; continue; }
     dummy.position.set(x, gy + 0.35, z);
     dummy.rotation.set(0, gRng() * Math.PI, 0);
     dummy.scale.set(0.7 + gRng() * 0.7, 0.6 + gRng() * 0.8, 1);
@@ -303,7 +321,7 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
     m.position.set(x, y, z);
     m.castShadow = true; m.receiveShadow = true;
-    scene.add(m);
+    addSolid(m);
     obstacles.boxes.push(new THREE.Box3(
       new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
       new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2),
@@ -314,6 +332,17 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   // like there's something to take cover behind even on a 600 m wide map.
   const playableR = half - 70; // stay clear of the cliff ramp
   const obsRng = mulberry32(1337);
+
+  // Helper: max height delta within ±r metres of (x, z). Axis-aligned boxes
+  // levitate visibly on steep slopes (corners poke into the air), so we
+  // refuse to place obstacles where the slope would expose more than ~0.6 m.
+  const slopeAt = (x: number, z: number, r: number) => {
+    const a = terrainHeight(x + r, z, half);
+    const b = terrainHeight(x - r, z, half);
+    const c = terrainHeight(x, z + r, half);
+    const d = terrainHeight(x, z - r, half);
+    return Math.max(a, b, c, d) - Math.min(a, b, c, d);
+  };
 
   // Cover bunkers — L-shaped walls. Cluster them into "battle zones" rather
   // than evenly distributing, so big swathes of map feel like wilderness.
@@ -335,9 +364,13 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
       const ox = (obsRng() - 0.5) * 14;
       const oz = (obsRng() - 0.5) * 14;
       const bx = hx + ox, bz = hz + oz;
+      // Skip steep slopes where the wall would obviously levitate.
+      if (slopeAt(bx, bz, 4) > 1.2) continue;
       const gy = terrainHeight(bx, bz, half);
-      mkBox(8, 2.4, 0.7, bx,     gy + 1.2, bz, bunkerMat);
-      mkBox(0.7, 2.4, 6, bx + 4, gy + 1.2, bz - 3, bunkerMat);
+      // Sink the base 0.3 m so any small mesh-vs-analytic mismatch hides
+      // under the ground rather than appearing as a gap.
+      mkBox(8, 2.4, 0.7, bx,     gy + 0.9, bz, bunkerMat);
+      mkBox(0.7, 2.4, 6, bx + 4, gy + 0.9, bz - 3, bunkerMat);
     }
   }
 
@@ -354,12 +387,14 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     const px = Math.cos(ang) * dist;
     const pz = Math.sin(ang) * dist;
     if (px * px + pz * pz < 16) { i--; continue; }    // not on centre pillar
-    if (Math.abs(pz) < 12 && Math.abs(px) < playableR * 0.9) { i--; continue; } // not in river
+    if (Math.abs(pz) < 18 && Math.abs(px) < playableR * 0.9) { i--; continue; } // not in river
+    if (slopeAt(px, pz, s * 0.6) > s * 0.8) { i--; continue; } // skip steep slopes
     const gy = terrainHeight(px, pz, half);
     const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
-    c.position.set(px, gy + s * 0.5, pz);
+    // Sink half the slope-tolerance so corners on uneven ground stay buried.
+    c.position.set(px, gy + s * 0.5 - 0.15, pz);
     c.castShadow = true; c.receiveShadow = true;
-    scene.add(c);
+    addSolid(c);
     obstacles.boxes.push(new THREE.Box3(
       new THREE.Vector3(px - s / 2, gy,     pz - s / 2),
       new THREE.Vector3(px + s / 2, gy + s, pz + s / 2),
@@ -375,9 +410,10 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     const dist = (0.2 + towerRng() * 0.7) * playableR;
     const tx = Math.cos(ang) * dist;
     const tz = Math.sin(ang) * dist;
-    if (Math.abs(tz) < 12) continue; // not in river
+    if (Math.abs(tz) < 18) continue; // not in river
+    if (slopeAt(tx, tz, 1.5) > 1.0) continue; // skip steep slopes
     const gy = terrainHeight(tx, tz, half);
-    mkBox(3, 1.4, 3, tx, gy + 0.7, tz, towerMat);
+    mkBox(3, 1.4, 3, tx, gy + 0.55, tz, towerMat);
   }
 
   // Center pillar with a glowing top so the middle of the arena is a landmark.
@@ -387,7 +423,7 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   );
   pillar.position.set(0, 2.5, 0);
   pillar.castShadow = true; pillar.receiveShadow = true;
-  scene.add(pillar);
+  addSolid(pillar);
 
   const beacon = new THREE.Mesh(
     new THREE.SphereGeometry(0.7, 16, 16),

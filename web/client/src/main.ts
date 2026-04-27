@@ -28,10 +28,14 @@ const input = new InputManager(refs.renderer.domElement, {
 const magazineSize = 30;
 let magazine = magazineSize;
 
-// Distance at which gun, laser, and crosshair converge. 30 m matches the
-// engagement range we expect most fights to happen at; closer/farther shots
-// will have small parallax that the aim-assist sphere absorbs.
-const AIM_CONVERGE_DIST = 30;
+// Default aim-convergence distance (used only when the camera ray doesn't
+// hit any world geometry within range — e.g. when looking at the sky).
+const AIM_CONVERGE_DEFAULT = 80;
+const AIM_CONVERGE_MAX = 250;
+const aimRaycaster = new THREE.Raycaster();
+aimRaycaster.far = AIM_CONVERGE_MAX;
+const camFwdScratch = new THREE.Vector3();
+const aimTargetScratch = new THREE.Vector3();
 let reloading = false;
 const reloadDuration = 1.6;
 
@@ -91,14 +95,23 @@ function bindRoom(r: Room<ArenaStateLike>) {
       });
       return;
     }
+    // Defensive: never create a remote avatar for ourselves. Without this
+    // a clone of the local player would appear and exactly mirror our
+    // movement, since the server reflects our own state back to us.
+    if (id === r.sessionId) return;
     const av = new Avatar(p.name, p.skin);
-    av.setPose(p.x, p.y, p.z, p.yaw, p.pitch);
+    // Snap remote players to local terrain so they don't appear floating
+    // (the server doesn't know about the heightfield, so it sends y = 5
+    // for fresh spawns regardless of the actual ground at (x, z)).
+    const snapY = (x: number, y: number, z: number) =>
+      Math.max(y, refs.heightAt(x, z) + 1.6);
+    av.setPose(p.x, snapY(p.x, p.y, p.z), p.z, p.yaw, p.pitch);
     av.setVisible(p.hp > 0);
     refs.scene.add(av.group);
     avatars.set(id, av);
     // Schema 2.x style: onChange is a method that returns an unsubscribe fn.
     const sync = () => {
-      av.setPose(p.x, p.y, p.z, p.yaw, p.pitch);
+      av.setPose(p.x, snapY(p.x, p.y, p.z), p.z, p.yaw, p.pitch);
       av.setVisible(p.hp > 0);
     };
     (p as any).onChange?.(sync);
@@ -163,10 +176,22 @@ function frame(now: number) {
   // (camera ray) but the laser shows the parallel-shifted gun-yaw axis,
   // confusing the user. With convergence: laser, gun, crosshair, and bullet
   // path all meet at the same target point.
-  const camFwd = new THREE.Vector3();
-  refs.camera.getWorldDirection(camFwd);
-  const aimTarget = refs.camera.position.clone().addScaledVector(camFwd, AIM_CONVERGE_DIST);
-  localAvatar.setAimTarget(aimTarget);
+  // Find the actual world point the camera-centred crosshair is pointing
+  // at by raycasting against the ground + obstacle meshes. This ensures
+  // the gun, laser, and bullet path converge on the *real* hit point at
+  // any distance — not just at a fixed 30 m, which would put bullets off-
+  // crosshair at long range due to the lateral camera/gun parallax.
+  refs.camera.getWorldDirection(camFwdScratch);
+  aimRaycaster.set(refs.camera.position, camFwdScratch);
+  const hits = aimRaycaster.intersectObjects(refs.aimMeshes, false);
+  let convergeDist = AIM_CONVERGE_DEFAULT;
+  for (const h of hits) {
+    if (h.distance > 1.0) { convergeDist = h.distance; break; }
+  }
+  aimTargetScratch
+    .copy(refs.camera.position)
+    .addScaledVector(camFwdScratch, convergeDist);
+  localAvatar.setAimTarget(aimTargetScratch);
 
   // Keep the directional shadow camera centred on the active player so
   // shadows render correctly across the whole 600 m map.
@@ -190,7 +215,7 @@ function frame(now: number) {
     // Bullet ray runs from the gun barrel to the convergent aim point, so
     // the visible tracer matches the laser direction exactly.
     const muzzle = controller.getMuzzlePosition();
-    const bulletDir = aimTarget.clone().sub(muzzle).normalize();
+    const bulletDir = aimTargetScratch.clone().sub(muzzle).normalize();
     const result = aim(muzzle, bulletDir, avatars);
     tracers.push(spawnTracer(refs.scene, refs.camera, muzzle, result.point));
     if (room && result.targetId) {
