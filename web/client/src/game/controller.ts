@@ -76,13 +76,9 @@ export class LocalController {
     this.position.z += move.z;
     this.resolveHorizontal();
 
+    const oldFeet = this.position.y - 1.6;
     this.position.y += dy;
-
-    if (this.position.y <= 1.6) {
-      this.position.y = 1.6;
-      this.velocityY = 0;
-      this.grounded = true;
-    }
+    this.resolveVertical(oldFeet);
 
     const lim = this.arenaHalf - 0.6;
     if (this.position.x > lim) this.position.x = lim;
@@ -104,16 +100,62 @@ export class LocalController {
     return true;
   }
 
-  /** Where bullets/rays should originate (player's head, in front of avatar). */
+  /** World-space position of the avatar's gun barrel, used as the spawn point
+   *  for tracers so they appear to come from the gun rather than from inside
+   *  the body or from the third-person camera. */
   getMuzzlePosition(): THREE.Vector3 {
-    // Slightly in front of the player so tracers don't visibly start inside
-    // the avatar's body.
-    const f = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    return new THREE.Vector3(
-      this.position.x + f.x * 0.6,
-      this.position.y + 0.05,
-      this.position.z + f.z * 0.6,
-    );
+    const sy = Math.sin(this.yaw);
+    const cy = Math.cos(this.yaw);
+    // Avatar local gun position is (0.35, 1.45, 0.35); we offset 1.4m forward
+    // from the gun so the muzzle is well clear of the body capsule.
+    const lx = 0.35;
+    const lz = 0.35 - 1.4;
+    const wx = this.position.x + lx * cy + lz * sy;
+    const wz = this.position.z - lx * sy + lz * cy;
+    // position.y is the camera/head reference height (~1.6); shoulder height
+    // is a bit below it.
+    return new THREE.Vector3(wx, this.position.y - 0.2, wz);
+  }
+
+  /** Land on top of crates and stop against ceilings; clamps to ground last. */
+  private resolveVertical(oldFeet: number) {
+    const r = PLAYER_RADIUS;
+    if (this.velocityY <= 0) {
+      // Falling: land on the highest crate top whose footprint we're over
+      // and that we crossed downward through this frame.
+      let bestTop = -Infinity;
+      for (const b of this.obstacles.boxes) {
+        const inX = this.position.x > b.min.x - r && this.position.x < b.max.x + r;
+        const inZ = this.position.z > b.min.z - r && this.position.z < b.max.z + r;
+        if (!inX || !inZ) continue;
+        const newFeet = this.position.y - 1.6;
+        if (oldFeet >= b.max.y - 0.05 && newFeet < b.max.y && b.max.y > bestTop) {
+          bestTop = b.max.y;
+        }
+      }
+      if (bestTop > -Infinity) {
+        this.position.y = bestTop + 1.6;
+        this.velocityY = 0;
+        this.grounded = true;
+      }
+    } else {
+      // Rising: bonk head on the underside of any box above us.
+      const newHead = this.position.y;
+      for (const b of this.obstacles.boxes) {
+        const inX = this.position.x > b.min.x - r && this.position.x < b.max.x + r;
+        const inZ = this.position.z > b.min.z - r && this.position.z < b.max.z + r;
+        if (!inX || !inZ) continue;
+        if (oldFeet + 1.6 <= b.min.y && newHead > b.min.y) {
+          this.position.y = b.min.y - 0.01;
+          this.velocityY = 0;
+        }
+      }
+    }
+    if (this.position.y <= 1.6) {
+      this.position.y = 1.6;
+      this.velocityY = 0;
+      this.grounded = true;
+    }
   }
 
   /** Push the player out of any horizontal obstacle they overlap. */
