@@ -85,9 +85,9 @@ export function createScene(host: HTMLElement): SceneRefs {
   const sun = new THREE.DirectionalLight(0xfff1d6, 1.5);
   sun.position.copy(sunDir).multiplyScalar(40);
   sun.castShadow = true;
-  sun.shadow.camera.left = -55; sun.shadow.camera.right = 55;
-  sun.shadow.camera.top = 55; sun.shadow.camera.bottom = -55;
-  sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 140;
+  sun.shadow.camera.left = -75; sun.shadow.camera.right = 75;
+  sun.shadow.camera.top = 75; sun.shadow.camera.bottom = -75;
+  sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 200;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0005;
   scene.add(sun);
@@ -113,7 +113,7 @@ export function createScene(host: HTMLElement): SceneRefs {
     scene.add(pl);
   }
 
-  const arenaHalf = 40;
+  const arenaHalf = 60;
   const obstacles = buildArena(scene, arenaHalf);
   const heightAt = (x: number, z: number) => terrainHeight(x, z, arenaHalf);
 
@@ -244,31 +244,34 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
       new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2),
     ));
   };
-  // Boundary walls
-  mkBox(half * 2, 5, 0.8, 0, 2.5, half);
-  mkBox(half * 2, 5, 0.8, 0, 2.5, -half);
-  mkBox(0.8, 5, half * 2, half, 2.5, 0);
-  mkBox(0.8, 5, half * 2, -half, 2.5, 0);
+  // Boundary walls — tall enough that a maximum jump from the highest crate
+  // can never exceed wall height (jump apex ≈ 1.45m, tallest crate ≈ 2.6m,
+  // tallest terrain swell ≈ 1.5m; 9m gives a comfortable safety margin).
+  const WALL_H = 9;
+  mkBox(half * 2, WALL_H, 0.8, 0, WALL_H / 2,  half);
+  mkBox(half * 2, WALL_H, 0.8, 0, WALL_H / 2, -half);
+  mkBox(0.8, WALL_H, half * 2,  half, WALL_H / 2, 0);
+  mkBox(0.8, WALL_H, half * 2, -half, WALL_H / 2, 0);
 
   // Cover bunkers — short L-shaped walls scattered around so there are
-  // sight-lines to break up at long range.
+  // sight-lines to break up at long range. Scaled out for the bigger map.
   const bunkerMat = new THREE.MeshStandardMaterial({ color: 0x3d4a6c, roughness: 0.85 });
-  const bunkers: Array<[number, number, number]> = [
-    [-22, 0,  18], [ 22, 0, -18],
-    [ 18, 0,  22], [-18, 0, -22],
-    [-30, 0, -8],  [ 30, 0,  8],
-    [  0, 0,  30], [  0, 0, -30],
+  const bunkers: Array<[number, number]> = [
+    [-32,  26], [ 32, -26], [ 26,  32], [-26, -32],
+    [-44, -12], [ 44,  12], [   0,  46], [   0, -46],
+    [-46,  30], [ 46, -30], [  30, -46], [ -30,  46],
   ];
-  for (const [bx, _by, bz] of bunkers) {
+  for (const [bx, bz] of bunkers) {
     const gy = terrainHeight(bx, bz, half);
-    mkBox(8, 2.2, 0.7, bx,     gy + 1.1, bz, bunkerMat);
-    mkBox(0.7, 2.2, 6, bx + 4, gy + 1.1, bz - 3, bunkerMat);
+    mkBox(8, 2.4, 0.7, bx,     gy + 1.2, bz, bunkerMat);
+    mkBox(0.7, 2.4, 6, bx + 4, gy + 1.2, bz - 3, bunkerMat);
   }
 
   // Crates — deterministic positions so all clients see the same layout.
+  // ~80 crates for the larger arena keeps cover density similar to before.
   const rng = mulberry32(1337);
   const crateMat = new THREE.MeshStandardMaterial({ color: 0xb2823c, roughness: 0.78 });
-  for (let i = 0; i < 36; i++) {
+  for (let i = 0; i < 80; i++) {
     const s = 1.2 + rng() * 1.4;
     const px = (rng() * 2 - 1) * (half - 2);
     const pz = (rng() * 2 - 1) * (half - 2);
@@ -288,7 +291,8 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   // A few taller "tower" blocks players can use as cover and jump up to.
   const towerMat = new THREE.MeshStandardMaterial({ color: 0x52628a, roughness: 0.5, metalness: 0.3 });
   const towers: Array<[number, number]> = [
-    [-12,  12], [ 12, -12], [-26,  0], [ 26, 0], [ 0, 24], [ 0, -24],
+    [-18,  18], [ 18, -18], [-38,  0], [ 38, 0], [ 0, 36], [ 0, -36],
+    [-30,  30], [ 30, -30], [-30, -30], [ 30,  30],
   ];
   for (const [tx, tz] of towers) {
     const gy = terrainHeight(tx, tz, half);

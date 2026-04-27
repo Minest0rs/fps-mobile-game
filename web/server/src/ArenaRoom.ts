@@ -5,7 +5,7 @@ interface MoveMsg { x: number; y: number; z: number; yaw: number; pitch: number;
 interface ShootMsg { targetId?: string; }
 interface JoinOpts { name?: string; skin?: string; }
 
-const ARENA_HALF = 40; // matches client builder
+const ARENA_HALF = 60; // matches client builder
 const RESPAWN_DELAY_MS = 3000;
 const SHOT_COOLDOWN_MS = 110; // ~9 shots/s
 const SHOT_DAMAGE = 22;

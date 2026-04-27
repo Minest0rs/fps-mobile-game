@@ -7,12 +7,18 @@ const JUMP_VELOCITY = 8.0;
 const MOVE_SPEED = 6.0;
 const PITCH_LIMIT = 1.1;
 const PLAYER_RADIUS = 0.45;
-// Third-person camera offsets — the hipfire pose is "over the shoulder",
-// the ADS pose is closer and tighter behind the head.
+// Third-person camera offsets. ADS arcs the camera over the right shoulder
+// rather than pulling it straight in toward the player's back: that keeps
+// the centre of the screen clear of the avatar's body so the crosshair is
+// always readable. The "side bulge" peaks mid-transition for a curved feel.
 const CAM_DIST_HIP = 4.2;
-const CAM_DIST_ADS = 2.0;
+const CAM_DIST_ADS = 2.4;
+const CAM_HEIGHT_HIP = 0.0;
+const CAM_HEIGHT_ADS = 0.35;
 const SHOULDER_HIP = 0.45;
-const SHOULDER_ADS = 0.25;
+const SHOULDER_ADS = 0.85;
+/** Extra lateral arc that peaks at aimBlend = 0.5; keeps the path curved. */
+const SHOULDER_ARC = 0.30;
 
 /**
  * Owns the local player camera and emits movement updates. Movement is computed
@@ -99,11 +105,19 @@ export class LocalController {
     if (this.position.z > lim) this.position.z = lim;
     if (this.position.z < -lim) this.position.z = -lim;
 
-    // Third-person camera: orbit behind the player and shifted to the right
-    // for an over-the-shoulder feel. Both pose distance and shoulder offset
-    // tighten while aiming, so ADS feels like leaning into the sights.
-    const camDist = CAM_DIST_HIP + (CAM_DIST_ADS - CAM_DIST_HIP) * this.aimBlend;
-    const shoulder = SHOULDER_HIP + (SHOULDER_ADS - SHOULDER_HIP) * this.aimBlend;
+    // Third-person camera: arcs over the right shoulder during ADS instead
+    // of pulling straight in toward the player's back. The path is curved
+    // (extra lateral bulge mid-transition) so the camera "rolls" sideways
+    // around the player rather than crashing into the body — that keeps
+    // the avatar out of the centre of the screen and the crosshair clear.
+    const t = this.aimBlend;
+    // Ease-out cubic — ADS feels snappy at the start, settles at the end.
+    const ease = 1 - (1 - t) * (1 - t) * (1 - t);
+    const camDist  = CAM_DIST_HIP   + (CAM_DIST_ADS   - CAM_DIST_HIP)   * ease;
+    const baseShoulder = SHOULDER_HIP + (SHOULDER_ADS - SHOULDER_HIP) * ease;
+    const arcBulge = SHOULDER_ARC * Math.sin(Math.PI * t);
+    const shoulder = baseShoulder + arcBulge;
+    const heightOffset = CAM_HEIGHT_HIP + (CAM_HEIGHT_ADS - CAM_HEIGHT_HIP) * ease;
     const cosP = Math.cos(this.pitch);
     const sinP = Math.sin(this.pitch);
     // Shift both camera origin and the look-at target laterally by the same
@@ -113,12 +127,12 @@ export class LocalController {
     const rz = -Math.sin(this.yaw);
     const cx = this.position.x + camDist * Math.sin(this.yaw) * cosP + shoulder * rx;
     // Don't let an aggressive look-up push the camera through the floor.
-    const cy = Math.max(0.6, this.position.y - camDist * sinP);
+    const cy = Math.max(0.6, this.position.y + heightOffset - camDist * sinP);
     const cz = this.position.z + camDist * Math.cos(this.yaw) * cosP + shoulder * rz;
     this.camera.position.set(cx, cy, cz);
     this.camera.lookAt(
       this.position.x + shoulder * rx,
-      this.position.y,
+      this.position.y + heightOffset,
       this.position.z + shoulder * rz,
     );
 
@@ -140,21 +154,29 @@ export class LocalController {
     return new THREE.Vector3(wx, this.position.y - 0.15, wz);
   }
 
-  /** Land on top of crates and stop against ceilings; clamps to terrain last. */
+  /** Land on top of crates and stop against ceilings; clamps to terrain last.
+   *  Player is treated as a capsule from feet (position.y - 1.6) to head
+   *  (position.y + 0.4). The "swept" landing test catches the case where a
+   *  fast descent skips the box top in one frame: if old feet were above the
+   *  top and new feet are below it, snap onto the top regardless of how
+   *  deep we plunged. */
   private resolveVertical(oldFeet: number) {
     const r = PLAYER_RADIUS;
     if (this.velocityY <= 0) {
-      // Falling: land on the highest crate top whose footprint we're over
-      // and that we crossed downward through this frame.
       let bestTop = -Infinity;
       for (const b of this.obstacles.boxes) {
         const inX = this.position.x > b.min.x - r && this.position.x < b.max.x + r;
         const inZ = this.position.z > b.min.z - r && this.position.z < b.max.z + r;
         if (!inX || !inZ) continue;
         const newFeet = this.position.y - 1.6;
-        if (oldFeet >= b.max.y - 0.05 && newFeet < b.max.y && b.max.y > bestTop) {
-          bestTop = b.max.y;
-        }
+        // Two ways to land on this box: (1) we were standing on or above
+        // its top last frame and crossed down through it (the classic swept
+        // case), (2) we are currently inside the top half-metre slab of the
+        // box (a small grace zone — fixes "sinking" when arriving at the
+        // top with a tiny vertical penetration after horizontal slide).
+        const swept = oldFeet >= b.max.y - 0.02 && newFeet < b.max.y;
+        const insideTopSlab = newFeet > b.max.y - 0.5 && newFeet < b.max.y && this.velocityY <= 0;
+        if ((swept || insideTopSlab) && b.max.y > bestTop) bestTop = b.max.y;
       }
       if (bestTop > -Infinity) {
         this.position.y = bestTop + 1.6;
@@ -163,13 +185,14 @@ export class LocalController {
       }
     } else {
       // Rising: bonk head on the underside of any box above us.
-      const newHead = this.position.y;
+      const oldHead = oldFeet + 2.0;
+      const newHead = this.position.y + 0.4;
       for (const b of this.obstacles.boxes) {
         const inX = this.position.x > b.min.x - r && this.position.x < b.max.x + r;
         const inZ = this.position.z > b.min.z - r && this.position.z < b.max.z + r;
         if (!inX || !inZ) continue;
-        if (oldFeet + 1.6 <= b.min.y && newHead > b.min.y) {
-          this.position.y = b.min.y - 0.01;
+        if (oldHead <= b.min.y && newHead > b.min.y) {
+          this.position.y = b.min.y - 0.4 - 0.01;
           this.velocityY = 0;
         }
       }
@@ -187,12 +210,19 @@ export class LocalController {
    *  few times so corners between two adjacent boxes resolve cleanly. */
   private resolveHorizontal() {
     const r = PLAYER_RADIUS;
+    const feet = this.position.y - 1.6;
+    const head = this.position.y + 0.4;
     for (let iter = 0; iter < 4; iter++) {
       let moved = false;
       for (const b of this.obstacles.boxes) {
-        // Skip boxes the player is fully above/below — used by floors only.
-        if (this.position.y - r > b.max.y) continue;
-        if (this.position.y + 2.0 < b.min.y) continue;
+        // Player capsule must overlap the box vertically for a horizontal
+        // push-out to apply. Using feet/head (NOT eye±r) is critical: with
+        // eye-relative checks, jumping NEXT to a tall crate would let the
+        // player's body slip through the crate's side because the eye is
+        // above the crate top while the feet are still inside the crate's
+        // vertical extent.
+        if (feet > b.max.y - 0.02) continue;
+        if (head < b.min.y + 0.02) continue;
         const cx = Math.max(b.min.x, Math.min(this.position.x, b.max.x));
         const cz = Math.max(b.min.z, Math.min(this.position.z, b.max.z));
         const dx = this.position.x - cx;
