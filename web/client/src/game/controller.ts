@@ -24,15 +24,7 @@ const DROWN_DPS = 8;
 // Third-person camera offsets. ADS arcs the camera over the right shoulder
 // rather than pulling it straight in toward the player's back: that keeps
 // the centre of the screen clear of the avatar's body so the crosshair is
-// always readable. The "side bulge" peaks mid-transition for a curved feel.
-const CAM_DIST_HIP = 4.2;
-const CAM_DIST_ADS = 2.4;
-const CAM_HEIGHT_HIP = 0.0;
-const CAM_HEIGHT_ADS = 0.35;
-const SHOULDER_HIP = 0.45;
-const SHOULDER_ADS = 0.85;
-/** Extra lateral arc that peaks at aimBlend = 0.5; keeps the path curved. */
-const SHOULDER_ARC = 0.30;
+// (Third-person constants removed — the local camera is first-person now.)
 
 /**
  * Owns the local player camera and emits movement updates. Movement is computed
@@ -60,11 +52,14 @@ export class LocalController {
   private recoilPitch = 0;
   private recoilYaw = 0;
   private velocityY = 0;
-  private grounded = true;
+  /** Whether the player's feet are on the ground (or on top of a box).
+   *  Public so the main loop can drive footstep cadence. */
+  grounded = true;
   /** Smoothed horizontal velocity (m/s in world space). Eased toward
-   *  the input-derived target velocity for accel/decel feel. */
-  private velX = 0;
-  private velZ = 0;
+   *  the input-derived target velocity for accel/decel feel. Public
+   *  so HUD/audio code can read player speed. */
+  velX = 0;
+  velZ = 0;
   /** Walk distance accumulator drives the head-bob sinusoid. Reset when
    *  the player stops or leaves the ground. */
   private bobPhase = 0;
@@ -88,7 +83,14 @@ export class LocalController {
   setPosition(x: number, y: number, z: number) {
     this.position.set(x, y, z);
     this.velocityY = 0;
+    this.velX = 0;
+    this.velZ = 0;
     this.grounded = true;
+    // Reset oxygen + drowning state so a player who died underwater
+    // doesn't respawn already suffocating.
+    this.oxygen = OXYGEN_MAX;
+    this.pendingDrownDamage = 0;
+    this.isUnderwater = false;
     // Face the arena centre so the player sees the action immediately after
     // spawn rather than staring at the wall they happened to be next to.
     const dx = -x;
@@ -164,8 +166,19 @@ export class LocalController {
       this.grounded = false;
     }
 
-    const grav = this.gravity * (this.isUnderwater ? UNDERWATER_GRAVITY_MULT : 1);
-    this.velocityY += grav * dt;
+    // Underwater: replace gravity with a target vertical speed driven by
+    // the jump button — held = swim up, released = slow sink. Velocity
+    // eases toward that target so swimming feels buoyant and damped.
+    // Above water: normal gravity + falling.
+    if (this.isUnderwater) {
+      const SWIM_UP = 4.0;
+      const SINK_RATE = -0.8;
+      const target = input.jumpHeld ? SWIM_UP : SINK_RATE;
+      const k = Math.min(1, dt * 4);
+      this.velocityY += (target - this.velocityY) * k;
+    } else {
+      this.velocityY += this.gravity * dt;
+    }
     const dy = this.velocityY * dt;
 
     // Move on each horizontal axis separately so the player slides along
@@ -204,62 +217,38 @@ export class LocalController {
     if (this.position.z > lim) this.position.z = lim;
     if (this.position.z < -lim) this.position.z = -lim;
 
-    // Third-person camera: arcs over the right shoulder during ADS instead
-    // of pulling straight in toward the player's back. The path is curved
-    // (extra lateral bulge mid-transition) so the camera "rolls" sideways
-    // around the player rather than crashing into the body — that keeps
-    // the avatar out of the centre of the screen and the crosshair clear.
-    const t = this.aimBlend;
-    // Ease-out cubic — ADS feels snappy at the start, settles at the end.
-    const ease = 1 - (1 - t) * (1 - t) * (1 - t);
-    const camDist  = CAM_DIST_HIP   + (CAM_DIST_ADS   - CAM_DIST_HIP)   * ease;
-    const baseShoulder = SHOULDER_HIP + (SHOULDER_ADS - SHOULDER_HIP) * ease;
-    const arcBulge = SHOULDER_ARC * Math.sin(Math.PI * t);
-    const shoulder = baseShoulder + arcBulge;
-    const heightOffset = CAM_HEIGHT_HIP + (CAM_HEIGHT_ADS - CAM_HEIGHT_HIP) * ease;
-    // Effective view angles include the recoil offset so the gun's kick
-    // is visible to the player.
+    // First-person camera. The camera sits at the player's eye position
+    // and looks down a forward vector built from the effective yaw/pitch
+    // (recoil-adjusted). Crosshair maps directly to "where the camera
+    // points", and the gun viewmodel renders in front of it via a
+    // separate camera-attached mesh.
     const effPitch = THREE.MathUtils.clamp(this.pitch + this.recoilPitch, -PITCH_LIMIT, PITCH_LIMIT);
     const effYaw = this.yaw + this.recoilYaw;
     const cosP = Math.cos(effPitch);
     const sinP = Math.sin(effPitch);
-    // Shift both camera origin and the look-at target laterally by the same
-    // amount; that keeps the camera ray parallel to the no-shift case so the
-    // crosshair still maps cleanly to a world ray.
-    const rx = Math.cos(effYaw);
-    const rz = -Math.sin(effYaw);
-    const cx = this.position.x + camDist * Math.sin(effYaw) * cosP + shoulder * rx;
-    const cz = this.position.z + camDist * Math.cos(effYaw) * cosP + shoulder * rz;
-    // Don't let the camera duck beneath the terrain at its own (x, z).
-    // Using a fixed lower bound (e.g. 0.6) breaks pitch when the player is
-    // standing in a depression below y = 0 — like the river — because the
-    // camera would clamp above the player's head and pitch input wouldn't
-    // move the view at all.
-    const camGround = this.heightAt(cx, cz);
-    const cy = Math.max(
-      camGround + 0.4,
-      this.position.y + heightOffset - camDist * sinP,
-    );
-    // Head bob — only when moving on the ground. Adds a tiny vertical
-    // sinusoid to the camera and look-at target so the world subtly
-    // bounces in time with footsteps. Disabled while ADS so the
-    // crosshair stays stable when aiming.
+    const fwdX = -Math.sin(effYaw) * cosP;
+    const fwdY = sinP;
+    const fwdZ = -Math.cos(effYaw) * cosP;
+
+    // Head bob — small lateral + vertical sinusoid while walking on the
+    // ground; suspended while aiming so the crosshair stays stable.
     const horizSpeed = Math.hypot(this.velX, this.velZ);
     if (this.grounded && horizSpeed > 0.5 && this.aimBlend < 0.5) {
       this.bobPhase += dt * (6 + horizSpeed * 0.3);
     } else {
-      this.bobPhase *= Math.pow(0.001, dt); // ease back to 0 quickly
+      this.bobPhase *= Math.pow(0.001, dt);
     }
     const bobAmt = Math.min(1, horizSpeed / MOVE_SPEED) * (1 - this.aimBlend);
-    const bobY = Math.sin(this.bobPhase * 2) * 0.045 * bobAmt;
-    const bobX = Math.cos(this.bobPhase) * 0.025 * bobAmt;
+    const bobY = Math.sin(this.bobPhase * 2) * 0.04 * bobAmt;
+    const bobX = Math.cos(this.bobPhase) * 0.03 * bobAmt;
+    const rightX = Math.cos(effYaw);
+    const rightZ = -Math.sin(effYaw);
 
-    this.camera.position.set(cx, cy + bobY, cz);
-    this.camera.lookAt(
-      this.position.x + shoulder * rx + bobX * rx,
-      this.position.y + heightOffset + bobY,
-      this.position.z + shoulder * rz + bobX * rz,
-    );
+    const cx = this.position.x + bobX * rightX;
+    const cy = this.position.y + bobY;
+    const cz = this.position.z + bobX * rightZ;
+    this.camera.position.set(cx, cy, cz);
+    this.camera.lookAt(cx + fwdX, cy + fwdY, cz + fwdZ);
 
     // Oxygen + drown logic. Submerged head depletes oxygen; surfacing
     // regenerates it (faster than depletion so resurfacing recovers).

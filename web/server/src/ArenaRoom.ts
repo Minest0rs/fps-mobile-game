@@ -47,7 +47,8 @@ const EVENT_ON_MAX_MS = 26_000;    // longest active duration
 const EVENT_INITIAL_GRACE_MS = 25_000;
 
 const ARENA_HALF = 400; // matches client builder (open-world map)
-const SPAWN_RADIUS = 60; // cluster fresh spawns near the centre
+const SPAWN_RADIUS = 90; // cluster fresh spawns near the centre (must
+// be wide enough that z > 45 is reachable so we never end up in the river)
 const RESPAWN_DELAY_MS = 3000;
 const MAX_FEED = 6;
 /** Tick rate for the simulation loop (state diff broadcast is decoupled). */
@@ -265,7 +266,11 @@ export class ArenaRoom extends Room<ArenaState> {
       const x = (Math.random() * 2 - 1) * SPAWN_RADIUS;
       const z = (Math.random() * 2 - 1) * SPAWN_RADIUS;
       // Avoid the river corridor (z near 0) and the centre pillar.
-      if (Math.abs(z) < 14) continue;
+      // The heightfield clamps the river bed below the water surface
+      // anywhere `riverFactor > 0.25`, which corresponds to |z| < ~38 m.
+      // Push spawns outside that band so the player never appears
+      // already underwater.
+      if (Math.abs(z) < 45) continue;
       if (x * x + z * z >= PILLAR_RADIUS * PILLAR_RADIUS) return { x, y: 5, z };
     }
     // Fallback (very unlikely): place on a circle just outside the pillar.
@@ -273,7 +278,7 @@ export class ArenaRoom extends Room<ArenaState> {
     return {
       x: Math.cos(angle) * 8,
       y: 5,
-      z: Math.sin(angle) * 8 + 16, // pushed off the river
+      z: Math.sin(angle) * 8 + 50, // pushed clear of the river ribbon
     };
   }
 

@@ -78,6 +78,8 @@ export function applyMatchEvents(
   refs: SceneRefs,
   controller: LocalController,
   dt: number,
+  /** Optional hooks for sound/UI effects. */
+  hooks?: { onLightning?: () => void },
 ) {
   // --- Night ---
   if (events.night !== ctx.applied.night) {
@@ -154,6 +156,7 @@ export function applyMatchEvents(
     if (t >= ctx.nextLightningAt) {
       ctx.lightningFlashFor = 0.18; // half-second flash with quick decay
       ctx.nextLightningAt = t + 2.5 + Math.random() * 6;
+      hooks?.onLightning?.();
     }
     if (ctx.lightningFlashFor > 0) {
       ctx.lightningFlashFor = Math.max(0, ctx.lightningFlashFor - dt);

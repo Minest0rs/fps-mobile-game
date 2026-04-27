@@ -7,6 +7,9 @@ export interface InputState {
   fireHeld: boolean;
   aimHeld: boolean;
   jumpRequested: boolean;
+  /** Held-down state of jump (Space / on-screen jump button). Used
+   *  underwater to swim upward as long as it's pressed. */
+  jumpHeld: boolean;
   toggleScoreboard: boolean;
 }
 
@@ -17,6 +20,7 @@ export class InputManager {
     fireHeld: false,
     aimHeld: false,
     jumpRequested: false,
+    jumpHeld: false,
     toggleScoreboard: false,
   };
 
@@ -69,6 +73,7 @@ export class InputManager {
       fireHeld: this.state.fireHeld,
       aimHeld: this.state.aimHeld,
       jumpRequested: this.state.jumpRequested,
+      jumpHeld: this.state.jumpHeld,
       toggleScoreboard: this.state.toggleScoreboard,
     };
     this.state.lookDelta = { x: 0, y: 0 };
@@ -84,11 +89,15 @@ export class InputManager {
   private bindKeyboard() {
     addEventListener("keydown", (e) => {
       this.keys.add(e.code);
-      if (e.code === "Space") this.state.jumpRequested = true;
+      if (e.code === "Space") {
+        this.state.jumpRequested = true;
+        this.state.jumpHeld = true;
+      }
       if (e.code === "Tab") { e.preventDefault(); this.state.toggleScoreboard = true; }
     });
     addEventListener("keyup", (e) => {
       this.keys.delete(e.code);
+      if (e.code === "Space") this.state.jumpHeld = false;
     });
     addEventListener("blur", () => this.keys.clear());
   }
@@ -189,7 +198,12 @@ export class InputManager {
     aimButton.addEventListener("pointerdown",  () => { this.state.aimHeld = true; });
     aimButton.addEventListener("pointerup",    () => { this.state.aimHeld = false; });
     aimButton.addEventListener("pointercancel",() => { this.state.aimHeld = false; });
-    jumpButton.addEventListener("pointerdown", () => { this.state.jumpRequested = true; });
+    jumpButton.addEventListener("pointerdown", () => {
+      this.state.jumpRequested = true;
+      this.state.jumpHeld = true;
+    });
+    jumpButton.addEventListener("pointerup", () => { this.state.jumpHeld = false; });
+    jumpButton.addEventListener("pointercancel", () => { this.state.jumpHeld = false; });
     scoreboardButton.addEventListener("pointerdown", () => { this.state.toggleScoreboard = true; });
   }
 

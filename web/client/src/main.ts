@@ -8,6 +8,7 @@ import { Avatar } from "./game/avatar";
 import { LocalController } from "./game/controller";
 import { InputManager } from "./game/input";
 import { aim, spawnTracer } from "./game/shooting";
+import { Sounds } from "./game/sounds";
 import { Hud } from "./ui/hud";
 import { setupMenu } from "./ui/menu";
 import { addKillXp, load, save } from "./profile";
@@ -45,17 +46,58 @@ const reloadDuration = 1.6;
 
 const hud = new Hud();
 hud.setMagazine(magazine);
+const sounds = new Sounds();
+// Browser autoplay policy: AudioContext stays suspended until a user
+// gesture, so resume on the first pointerdown anywhere on the page.
+addEventListener("pointerdown", () => { /* ensureCtx is lazy */ }, { once: true });
+// Track underwater state transitions to play the splash exactly once
+// per crossing.
+let wasUnderwater = false;
 
 const controller = new LocalController(refs.camera, refs.arenaHalf, refs.obstacles, refs.heightAt);
 
 // Local player avatar — visible to the local player in third-person view.
-// Kept out of `avatars` so it isn't tested as a hit target.
+// Kept out of `avatars` so it isn't tested as a hit target. The avatar
+// is *invisible* on the local client (we render in first-person), but
+// we keep it around for two reasons:
+//   1. It still positions the gun rig in world space so the muzzle
+//      position calculation continues to work.
+//   2. Other players see remote-replicated copies of *their* avatars,
+//      not this one — the local model would otherwise crowd the FPS
+//      view by appearing right in front of the camera.
 const localAvatar = new Avatar("You", load().skin);
-localAvatar.setVisible(true);
-// The laser sight only shows while aiming so it isn't visual clutter every
-// frame.
+localAvatar.setVisible(false);
 localAvatar.setLaserVisible(false);
 refs.scene.add(localAvatar.group);
+
+// FPS viewmodel — a small, low-poly gun rendered as a child of the camera
+// so it's always visible at the bottom-right of the player's view. We add
+// the camera to the scene so its children render. Position is in *camera
+// space*: x=right, y=up, z=back (camera looks down -Z).
+refs.scene.add(refs.camera);
+const viewModel = new THREE.Group();
+{
+  const matBody = new THREE.MeshStandardMaterial({ color: 0x202533, roughness: 0.6, metalness: 0.2 });
+  const matAccent = new THREE.MeshStandardMaterial({ color: 0x404654, roughness: 0.5, metalness: 0.3 });
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.13, 0.30), matBody);
+  stock.position.set(0, 0, 0.13);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.18, 0.45), matBody);
+  body.position.set(0, 0.02, -0.10);
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.55), matAccent);
+  barrel.position.set(0, 0.05, -0.50);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.10), matBody);
+  grip.position.set(0, -0.10, 0.00);
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.18, 0.08), matAccent);
+  mag.position.set(0, -0.16, -0.08);
+  for (const m of [stock, body, barrel, grip, mag]) {
+    m.castShadow = false;
+    m.receiveShadow = false;
+    viewModel.add(m);
+  }
+}
+viewModel.position.set(0.28, -0.24, -0.55);
+viewModel.rotation.set(-0.04, -0.05, 0);
+refs.camera.add(viewModel);
 
 // FOV transition is driven by the controller's aimBlend so camera distance,
 // shoulder offset, look-sensitivity, and FOV all blend in lockstep.
@@ -170,7 +212,8 @@ function frame(now: number) {
       hud.setHp(me.hp);
       hud.setOxygen(controller.oxygenFraction(), controller.isUnderwater);
       alive = me.hp > 0;
-      localAvatar.setVisible(alive);
+      // Local avatar stays hidden in FPS view; only the remote-replicated
+      // copy that other players see needs to reflect aliveness.
       localAvatar.setSkin(me.skin);
       if (alive) {
         // Push position to server every frame; server clamps and reflects state.
@@ -236,7 +279,9 @@ function frame(now: number) {
     eventState.thunderstorm = !!room.state.events.thunderstorm;
     eventState.sandstorm = !!room.state.events.sandstorm;
   }
-  applyMatchEvents(eventState, eventCtx, refs, controller, dt);
+  applyMatchEvents(eventState, eventCtx, refs, controller, dt, {
+    onLightning: () => sounds.playThunder(),
+  });
 
   if (i.toggleScoreboard) hud.toggleScoreboard();
 
@@ -246,7 +291,17 @@ function frame(now: number) {
   const adsFov = baseFov * 0.55;
   refs.camera.fov = baseFov + (adsFov - baseFov) * aimAmt;
   refs.camera.updateProjectionMatrix();
-  localAvatar.setLaserVisible(aimAmt > 0.1);
+  localAvatar.setLaserVisible(false);
+
+  // Slide the viewmodel toward the centre/forward when aiming so the
+  // gun lines up under the crosshair, then back to the rest hip pose.
+  const vmHipX = 0.28, vmHipY = -0.24, vmHipZ = -0.55;
+  const vmAdsX = 0.00, vmAdsY = -0.13, vmAdsZ = -0.42;
+  viewModel.position.set(
+    vmHipX + (vmAdsX - vmHipX) * aimAmt,
+    vmHipY + (vmAdsY - vmHipY) * aimAmt,
+    vmHipZ + (vmAdsZ - vmHipZ) * aimAmt,
+  );
 
   // Shooting (no firing while dead). Cadence and pellet count come from
   // the active weapon, so swapping rifle ↔ shotgun ↔ sniper changes the
@@ -259,6 +314,7 @@ function frame(now: number) {
     // back over ~180 ms, so the player sees the camera jolt up + slightly
     // sideways and can compensate by pulling down on touch / mouse.
     controller.applyRecoil(weapon.recoil);
+    sounds.playShot(weapon.id);
     // Spawn tracer from the *visible* barrel tip (rotated by the convergent
     // aim) so the user sees bullets fly from where their gun is pointing,
     // not from a yaw-only approximation behind/below the actual barrel.
@@ -281,8 +337,21 @@ function frame(now: number) {
       for (const [targetId, count] of Object.entries(pelletHits)) {
         for (let n = 0; n < count; n++) room.send("shoot", { targetId });
       }
+      if (Object.keys(pelletHits).length > 0) sounds.playHit();
     }
     if (magazine === 0) startReload();
+  }
+
+  // Per-frame audio: footsteps + underwater filter switch + splash on
+  // entering/leaving water.
+  if (alive) {
+    const horizSpeed = Math.hypot(controller.velX, controller.velZ);
+    sounds.tickFootsteps(horizSpeed, dt, controller.grounded, controller.isUnderwater);
+  }
+  if (controller.isUnderwater !== wasUnderwater) {
+    sounds.setUnderwater(controller.isUnderwater);
+    sounds.playSplash();
+    wasUnderwater = controller.isUnderwater;
   }
 
   // Tracer cleanup
@@ -299,6 +368,7 @@ function startReload() {
   if (reloading) return;
   reloading = true;
   hud.setMagazine(0);
+  sounds.playReload();
   setTimeout(() => {
     magazine = weapon.magSize;
     reloading = false;
