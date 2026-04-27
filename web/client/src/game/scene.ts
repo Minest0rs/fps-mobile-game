@@ -10,8 +10,8 @@ export interface SceneRefs {
 /** Build the renderer, camera, lights, sky, ground, walls, and crates. */
 export function createScene(host: HTMLElement): SceneRefs {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0b0d12);
-  scene.fog = new THREE.Fog(0x0b0d12, 25, 80);
+  scene.background = new THREE.Color(0x1a2640);
+  scene.fog = new THREE.Fog(0x1a2640, 40, 120);
 
   const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
   // Sit the camera somewhere visible until the server tells us where to spawn.
@@ -31,18 +31,45 @@ export function createScene(host: HTMLElement): SceneRefs {
   renderer.setSize(Math.max(1, host.clientWidth), Math.max(1, host.clientHeight), false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
   host.appendChild(renderer.domElement);
 
-  const ambient = new THREE.HemisphereLight(0x88aaff, 0x0a0d18, 0.45);
+  // Bright sky / dim ground hemisphere — fills shadows so nothing is pitch black.
+  const ambient = new THREE.HemisphereLight(0xbcd6ff, 0x222a3a, 1.1);
   scene.add(ambient);
 
-  const sun = new THREE.DirectionalLight(0xfff1d6, 1.0);
-  sun.position.set(20, 30, 14);
+  // "Sun" — main shadow caster with warm tint.
+  const sun = new THREE.DirectionalLight(0xfff1d6, 1.5);
+  sun.position.set(22, 30, 14);
   sun.castShadow = true;
   sun.shadow.camera.left = -30; sun.shadow.camera.right = 30;
   sun.shadow.camera.top = 30; sun.shadow.camera.bottom = -30;
-  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 80;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0005;
   scene.add(sun);
+  scene.add(sun.target);
+
+  // Cool "back light" from the opposite side to keep faces away from the sun
+  // from going dark.
+  const fill = new THREE.DirectionalLight(0x6fa8ff, 0.45);
+  fill.position.set(-20, 18, -12);
+  scene.add(fill);
+
+  // Four colored accent point lights, one per quadrant — adds neon-arena vibe
+  // and prevents pitch-black corners during night-mode skins.
+  const accents: Array<[number, number, number, number]> = [
+    [0xff4c6e,  14, 6,  14],
+    [0x4cffd6, -14, 6,  14],
+    [0x9d6bff,  14, 6, -14],
+    [0xffd66e, -14, 6, -14],
+  ];
+  for (const [color, x, y, z] of accents) {
+    const pl = new THREE.PointLight(color, 0.9, 22, 1.6);
+    pl.position.set(x, y, z);
+    scene.add(pl);
+  }
 
   const arenaHalf = 19;
   buildArena(scene, arenaHalf);
@@ -62,21 +89,21 @@ export function createScene(host: HTMLElement): SceneRefs {
 }
 
 function buildArena(scene: THREE.Scene, half: number) {
-  // Ground
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0x1a2030, roughness: 0.95, metalness: 0.1 });
+  // Ground — lighter so the sun's directional light reads clearly.
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x36405a, roughness: 0.9, metalness: 0.1 });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
   // Grid overlay
-  const grid = new THREE.GridHelper(half * 2, 20, 0x2a3550, 0x1a2030);
+  const grid = new THREE.GridHelper(half * 2, 20, 0x6e7da3, 0x4a5775);
   (grid.material as THREE.Material).transparent = true;
-  (grid.material as THREE.Material).opacity = 0.4;
+  (grid.material as THREE.Material).opacity = 0.55;
   scene.add(grid);
 
   // Walls
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x303a55, roughness: 0.7, metalness: 0.2 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a577a, roughness: 0.6, metalness: 0.25 });
   const mkWall = (w: number, h: number, d: number, x: number, y: number, z: number) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
     m.position.set(x, y, z);
@@ -90,7 +117,7 @@ function buildArena(scene: THREE.Scene, half: number) {
 
   // Crates — deterministic positions so all clients see the same layout.
   const rng = mulberry32(1337);
-  const crateMat = new THREE.MeshStandardMaterial({ color: 0x6c512a, roughness: 0.85 });
+  const crateMat = new THREE.MeshStandardMaterial({ color: 0xb2823c, roughness: 0.78 });
   for (let i = 0; i < 14; i++) {
     const s = 1.4 + rng() * 1.2;
     const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
@@ -103,14 +130,28 @@ function buildArena(scene: THREE.Scene, half: number) {
     scene.add(c);
   }
 
-  // Center pillar
+  // Center pillar with a glowing top so the middle of the arena is a landmark.
   const pillar = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.2, 1.2, 4, 16),
-    new THREE.MeshStandardMaterial({ color: 0x44557a, roughness: 0.5, metalness: 0.4 }),
+    new THREE.CylinderGeometry(1.2, 1.2, 4, 24),
+    new THREE.MeshStandardMaterial({ color: 0x6478a8, roughness: 0.4, metalness: 0.5 }),
   );
   pillar.position.set(0, 2, 0);
   pillar.castShadow = true; pillar.receiveShadow = true;
   scene.add(pillar);
+
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.6, 16, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0xffffff, emissive: 0x4cffd6, emissiveIntensity: 2.5,
+      roughness: 0.2, metalness: 0.0,
+    }),
+  );
+  beacon.position.set(0, 4.6, 0);
+  scene.add(beacon);
+
+  const beaconLight = new THREE.PointLight(0x4cffd6, 1.4, 18, 1.6);
+  beaconLight.position.set(0, 4.6, 0);
+  scene.add(beaconLight);
 }
 
 function mulberry32(seed: number) {
