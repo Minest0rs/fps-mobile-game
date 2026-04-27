@@ -11,7 +11,15 @@ body {
 }
 
 #canvas-host { position: fixed; inset: 0; }
-canvas { display: block; }
+/* Force the canvas to its host's CSS size; without this, three.js sizes the
+ * canvas drawing buffer to viewport*pixelRatio CSS px, which (on mobile with
+ * dpr > 1) makes the canvas wider than the viewport and shifts the rendered
+ * scene off-centre. */
+#canvas-host > canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
 
 .overlay {
   position: fixed; inset: 0; display: grid; place-items: center;

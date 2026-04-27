@@ -13,8 +13,10 @@ export class Player extends Schema {
   @type("number") hp = 100;
   @type("number") kills = 0;
   @type("number") deaths = 0;
-  @type("number") lastShotAt = 0;
-  @type("number") respawnAt = 0;
+  // Server-only fields (not replicated): cooldown enforcement and respawn
+  // scheduling are pure server logic, no client cares about the timestamps.
+  lastShotAt = 0;
+  respawnAt = 0;
 }
 
 /** A row in the recent-kill log; rendered by clients as the kill feed.

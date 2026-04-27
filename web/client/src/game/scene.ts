@@ -38,7 +38,7 @@ export function createScene(host: HTMLElement): SceneRefs {
     renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "default" });
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(Math.max(1, host.clientWidth), Math.max(1, host.clientHeight), false);
+  renderer.setSize(Math.max(1, host.clientWidth), Math.max(1, host.clientHeight));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -86,7 +86,7 @@ export function createScene(host: HTMLElement): SceneRefs {
 
   const TARGET_HFOV_DEG = 100; // wide enough to feel like a real FPS
   const fit = () => {
-    renderer.setSize(host.clientWidth, host.clientHeight, false);
+    renderer.setSize(host.clientWidth, host.clientHeight);
     const aspect = host.clientWidth / Math.max(1, host.clientHeight);
     camera.aspect = aspect;
     // Convert target horizontal FOV → vertical FOV given the current aspect.
