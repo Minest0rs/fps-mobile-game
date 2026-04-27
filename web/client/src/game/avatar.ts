@@ -46,6 +46,7 @@ export class Avatar {
       new THREE.Vector3(0, 0, -60),
     ]);
     this.laser = new THREE.Line(laserGeom, laserMat);
+    this.laser.visible = false; // off until ADS is held (controlled per-frame)
     this.gun.add(this.laser);
 
     this.nameTag = makeNameSprite(name);

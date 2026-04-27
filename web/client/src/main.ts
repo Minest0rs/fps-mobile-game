@@ -42,9 +42,8 @@ localAvatar.setVisible(true);
 localAvatar.setLaserVisible(false);
 refs.scene.add(localAvatar.group);
 
-// FOV transition for aim-down-sights (zoom). The base FOV is recomputed by
-// scene.fit() on resize; we lerp between that and a narrower FOV when aiming.
-let fovBlend = 0; // 0 = hipfire, 1 = ADS
+// FOV transition is driven by the controller's aimBlend so camera distance,
+// shoulder offset, look-sensitivity, and FOV all blend in lockstep.
 
 let room: Room<ArenaStateLike> | null = null;
 const avatars = new Map<string, Avatar>();
@@ -152,14 +151,13 @@ function frame(now: number) {
 
   if (i.toggleScoreboard) hud.toggleScoreboard();
 
-  // Aim-down-sights: smooth FOV blend, show laser sight on the local avatar.
-  const target = i.aimHeld && alive ? 1 : 0;
-  fovBlend += (target - fovBlend) * Math.min(1, dt * 12);
+  // Aim-down-sights: FOV and laser-sight track the controller's aim blend.
+  const aimAmt = alive ? controller.aimBlend : 0;
   const baseFov = refs.getBaseFov();
   const adsFov = baseFov * 0.55;
-  refs.camera.fov = baseFov + (adsFov - baseFov) * fovBlend;
+  refs.camera.fov = baseFov + (adsFov - baseFov) * aimAmt;
   refs.camera.updateProjectionMatrix();
-  localAvatar.setLaserVisible(fovBlend > 0.05 && alive);
+  localAvatar.setLaserVisible(aimAmt > 0.1);
 
   // Shooting (no firing while dead)
   if (alive && i.fireHeld && !reloading && magazine > 0 && performance.now() - lastShotAt > shotIntervalMs) {

@@ -76,32 +76,31 @@ export function spawnTracer(
   if (totalLen < 0.5) return (_dt: number) => false;
   dir.normalize();
 
-  const START_OFFSET = 0.6;
+  const START_OFFSET = 0.4;
   const endLen = Math.max(0.6, totalLen - START_OFFSET);
 
   // Distribute pellets along the shot path; spacing scales with length so
   // long shots don't get crowded with hundreds of spheres.
-  const SPACING = 1.2;
-  const COUNT = Math.min(28, Math.max(4, Math.floor(endLen / SPACING)));
+  const SPACING = 0.9;
+  const COUNT = Math.min(40, Math.max(6, Math.floor(endLen / SPACING)));
   const meshes: Array<{ mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; geom: THREE.BufferGeometry }> = [];
 
-  // Muzzle flash (largest, brightest)
-  meshes.push(makePellet(scene, from.clone().addScaledVector(dir, START_OFFSET), 0.45, 0xfff7c2));
+  // Muzzle flash — large bright burst right at the barrel.
+  meshes.push(makePellet(scene, from.clone().addScaledVector(dir, START_OFFSET), 0.7, 0xfff7c2));
 
-  // Trail pellets — scale up with distance from camera so distant pellets
-  // remain visible at all.
+  // Trail pellets — scale up with distance so distant pellets remain visible.
   for (let i = 1; i < COUNT - 1; i++) {
     const t = i / (COUNT - 1);
     const pos = from.clone().addScaledVector(dir, START_OFFSET + t * endLen);
-    const distFromCamera = pos.distanceTo(from);
-    const radius = 0.22 + Math.min(0.45, distFromCamera * 0.04);
-    meshes.push(makePellet(scene, pos, radius, 0xffe066));
+    const distFromMuzzle = pos.distanceTo(from);
+    const radius = 0.32 + Math.min(0.6, distFromMuzzle * 0.05);
+    meshes.push(makePellet(scene, pos, radius, 0xffd24a));
   }
 
-  // Impact sphere
-  meshes.push(makePellet(scene, to.clone(), 0.45, 0xff8a3a));
+  // Impact sphere — orange burst at the hit point.
+  meshes.push(makePellet(scene, to.clone(), 0.7, 0xff7a2a));
 
-  const TOTAL_LIFE = 0.28;
+  const TOTAL_LIFE = 0.55;
   let life = TOTAL_LIFE;
   return (dt: number) => {
     life -= dt;
@@ -123,10 +122,16 @@ function makePellet(scene: THREE.Scene, pos: THREE.Vector3, radius: number, colo
   const mat = new THREE.MeshBasicMaterial({
     color, transparent: true, opacity: 1.0,
     blending: THREE.AdditiveBlending, depthWrite: false,
+    // Disable scene fog so distant tracers stay bright instead of fading
+    // into the haze; they are short-lived so this is a reasonable cheat.
+    fog: false,
   });
-  const geom = new THREE.SphereGeometry(radius, 8, 6);
+  const geom = new THREE.SphereGeometry(radius, 10, 8);
   const mesh = new THREE.Mesh(geom, mat);
   mesh.position.copy(pos);
+  // Render after opaque geometry — additive blending looks correct only when
+  // we don't write to depth and draw last.
+  mesh.renderOrder = 10;
   scene.add(mesh);
   return { mesh, mat, geom };
 }

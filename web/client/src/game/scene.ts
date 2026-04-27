@@ -19,8 +19,10 @@ export interface SceneRefs {
 /** Build the renderer, camera, lights, sky, ground, walls, and crates. */
 export function createScene(host: HTMLElement): SceneRefs {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1a2640);
-  scene.fog = new THREE.Fog(0x1a2640, 80, 220);
+  // Warm, hazy daytime air. The fog colour matches the sky's horizon band so
+  // distant geometry blends into the skybox instead of cutting off sharply.
+  scene.background = new THREE.Color(0xb8cce0);
+  scene.fog = new THREE.Fog(0xb8cce0, 90, 260);
   buildSky(scene);
 
   // Vertical FOV is recomputed each resize to keep the horizontal FOV roughly
@@ -114,44 +116,87 @@ export function createScene(host: HTMLElement): SceneRefs {
 
 function buildArena(scene: THREE.Scene, half: number): Obstacles {
   const obstacles: Obstacles = { boxes: [], cylinders: [] };
-  // Ground — lighter so the sun's directional light reads clearly.
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0x36405a, roughness: 0.9, metalness: 0.1 });
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), groundMat);
+
+  // Ground — vertex-coloured grass. Each vertex gets a small green-shade
+  // jitter so the field reads as natural turf rather than flat colour.
+  const groundGeom = new THREE.PlaneGeometry(half * 2, half * 2, 64, 64);
+  const colours = new Float32Array(groundGeom.attributes.position.count * 3);
+  const cRng = mulberry32(2024);
+  for (let i = 0; i < colours.length; i += 3) {
+    const t = cRng();
+    // Greens between (0.32, 0.55, 0.22) and (0.55, 0.74, 0.32) — varied turf.
+    colours[i + 0] = 0.32 + t * 0.23;
+    colours[i + 1] = 0.55 + t * 0.19;
+    colours[i + 2] = 0.22 + t * 0.10;
+  }
+  groundGeom.setAttribute("color", new THREE.BufferAttribute(colours, 3));
+  // Subtly displace the ground vertices so the field has gentle undulations.
+  const pos = groundGeom.attributes.position;
+  const hRng = mulberry32(77);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    const edge = Math.max(Math.abs(x), Math.abs(y));
+    // Keep the playable centre flat; only the outer ring undulates so
+    // collisions don't desync between client and server.
+    if (edge < half - 4) continue;
+    pos.setZ(i, (Math.sin(x * 0.15) + Math.cos(y * 0.18)) * 0.4);
+  }
+  pos.needsUpdate = true;
+  groundGeom.computeVertexNormals();
+  const groundMat = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.95, metalness: 0.0,
+  });
+  const ground = new THREE.Mesh(groundGeom, groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
   // Outer "landscape" — a much larger ground plane behind the play-area
-  // walls so the horizon doesn't end at the arena bounds. Slightly darker.
+  // walls so the horizon doesn't end at the arena bounds.
   const outer = new THREE.Mesh(
     new THREE.PlaneGeometry(half * 8, half * 8),
-    new THREE.MeshStandardMaterial({ color: 0x232a44, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ color: 0x3d5a2c, roughness: 0.98 }),
   );
   outer.rotation.x = -Math.PI / 2;
-  outer.position.y = -0.01;
+  outer.position.y = -0.05;
   outer.receiveShadow = true;
   scene.add(outer);
 
-  // Distant decorative hills around the arena (no collision; just horizon
-  // dressing) so the world reads as a real place rather than a flat plane.
-  const hillMat = new THREE.MeshStandardMaterial({ color: 0x2c3656, roughness: 1.0 });
+  // Distant decorative hills — green forested mounds beyond the play area.
+  const hillMat = new THREE.MeshStandardMaterial({ color: 0x2f4a23, roughness: 1.0 });
   const hillRng = mulberry32(909);
-  for (let i = 0; i < 60; i++) {
-    const angle = (i / 60) * Math.PI * 2 + hillRng() * 0.4;
-    const dist = half * 1.6 + hillRng() * half * 1.5;
-    const h = 6 + hillRng() * 14;
-    const r = 6 + hillRng() * 10;
+  for (let i = 0; i < 70; i++) {
+    const angle = (i / 70) * Math.PI * 2 + hillRng() * 0.4;
+    const dist = half * 1.6 + hillRng() * half * 1.8;
+    const h = 6 + hillRng() * 16;
+    const r = 6 + hillRng() * 12;
     const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), hillMat);
     cone.position.set(Math.cos(angle) * dist, h / 2 - 0.5, Math.sin(angle) * dist);
     cone.rotation.y = hillRng() * Math.PI;
     scene.add(cone);
   }
 
-  // Grid overlay
-  const grid = new THREE.GridHelper(half * 2, 40, 0x6e7da3, 0x4a5775);
-  (grid.material as THREE.Material).transparent = true;
-  (grid.material as THREE.Material).opacity = 0.45;
-  scene.add(grid);
+  // Grass tufts — flat triangles scattered across the field. Cheap visual
+  // noise that breaks up the otherwise uniform ground.
+  const grassMat = new THREE.MeshStandardMaterial({
+    color: 0x4f7a31, roughness: 1.0, side: THREE.DoubleSide, transparent: true, opacity: 0.85,
+  });
+  const grassGeom = new THREE.PlaneGeometry(0.4, 0.7);
+  const grassCount = 300;
+  const grass = new THREE.InstancedMesh(grassGeom, grassMat, grassCount);
+  const dummy = new THREE.Object3D();
+  const gRng = mulberry32(444);
+  for (let i = 0; i < grassCount; i++) {
+    const x = (gRng() * 2 - 1) * (half - 1);
+    const z = (gRng() * 2 - 1) * (half - 1);
+    if (x * x + z * z < 9) { i--; continue; } // not on the centre pillar
+    dummy.position.set(x, 0.35, z);
+    dummy.rotation.set(0, gRng() * Math.PI, 0);
+    dummy.scale.set(0.7 + gRng() * 0.7, 0.6 + gRng() * 0.8, 1);
+    dummy.updateMatrix();
+    grass.setMatrixAt(i, dummy.matrix);
+  }
+  scene.add(grass);
 
   // Walls
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a577a, roughness: 0.6, metalness: 0.25 });
@@ -250,9 +295,9 @@ function buildSky(scene: THREE.Scene) {
     depthWrite: false,
     fog: false,
     uniforms: {
-      topColor:    { value: new THREE.Color(0x1d3a78) },
-      midColor:    { value: new THREE.Color(0x6892c8) },
-      bottomColor: { value: new THREE.Color(0xe5b585) },
+      topColor:    { value: new THREE.Color(0x4a7cc4) },
+      midColor:    { value: new THREE.Color(0xb8cce0) },
+      bottomColor: { value: new THREE.Color(0x6e8c5e) },
     },
     vertexShader: `
       varying vec3 vWorld;

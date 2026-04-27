@@ -7,8 +7,12 @@ const JUMP_VELOCITY = 8.0;
 const MOVE_SPEED = 6.0;
 const PITCH_LIMIT = 1.1;
 const PLAYER_RADIUS = 0.45;
-// Third-person camera offset.
-const CAM_DIST = 4.5;
+// Third-person camera offsets — the hipfire pose is "over the shoulder",
+// the ADS pose is closer and tighter behind the head.
+const CAM_DIST_HIP = 4.5;
+const CAM_DIST_ADS = 2.2;
+const SHOULDER_HIP = 0.9;
+const SHOULDER_ADS = 0.45;
 
 /**
  * Owns the local player camera and emits movement updates. Movement is computed
@@ -23,6 +27,8 @@ export class LocalController {
   // pillar rather than an empty wall).
   yaw = Math.PI / 4;
   pitch = 0;
+  /** Blend toward 1 while ADS is held; smoothed in update(). */
+  aimBlend = 0;
   private velocityY = 0;
   private grounded = true;
 
@@ -48,8 +54,13 @@ export class LocalController {
 
   /** Runs every frame. Returns true if any state worth syncing changed. */
   update(dt: number, input: ReturnType<InputManager["consume"]>): boolean {
-    this.yaw -= input.lookDelta.x;
-    this.pitch -= input.lookDelta.y;
+    // Smoothly blend the ADS amount so camera transitions are not jarring.
+    const aimTarget = input.aimHeld ? 1 : 0;
+    this.aimBlend += (aimTarget - this.aimBlend) * Math.min(1, dt * 12);
+    // While aiming, halve look sensitivity so precision is easier on touch.
+    const lookScale = 1 - 0.55 * this.aimBlend;
+    this.yaw -= input.lookDelta.x * lookScale;
+    this.pitch -= input.lookDelta.y * lookScale;
     if (this.pitch > PITCH_LIMIT) this.pitch = PITCH_LIMIT;
     if (this.pitch < -PITCH_LIMIT) this.pitch = -PITCH_LIMIT;
 
@@ -86,16 +97,28 @@ export class LocalController {
     if (this.position.z > lim) this.position.z = lim;
     if (this.position.z < -lim) this.position.z = -lim;
 
-    // Third-person camera: orbit a fixed distance behind the player along the
-    // yaw axis, tilted by pitch. Look at the player's head.
+    // Third-person camera: orbit behind the player and shifted to the right
+    // for an over-the-shoulder feel. Both pose distance and shoulder offset
+    // tighten while aiming, so ADS feels like leaning into the sights.
+    const camDist = CAM_DIST_HIP + (CAM_DIST_ADS - CAM_DIST_HIP) * this.aimBlend;
+    const shoulder = SHOULDER_HIP + (SHOULDER_ADS - SHOULDER_HIP) * this.aimBlend;
     const cosP = Math.cos(this.pitch);
     const sinP = Math.sin(this.pitch);
-    const cx = this.position.x + CAM_DIST * Math.sin(this.yaw) * cosP;
+    // Shift both camera origin and the look-at target laterally by the same
+    // amount; that keeps the camera ray parallel to the no-shift case so the
+    // crosshair still maps cleanly to a world ray.
+    const rx = Math.cos(this.yaw);
+    const rz = -Math.sin(this.yaw);
+    const cx = this.position.x + camDist * Math.sin(this.yaw) * cosP + shoulder * rx;
     // Don't let an aggressive look-up push the camera through the floor.
-    const cy = Math.max(0.6, this.position.y - CAM_DIST * sinP);
-    const cz = this.position.z + CAM_DIST * Math.cos(this.yaw) * cosP;
+    const cy = Math.max(0.6, this.position.y - camDist * sinP);
+    const cz = this.position.z + camDist * Math.cos(this.yaw) * cosP + shoulder * rz;
     this.camera.position.set(cx, cy, cz);
-    this.camera.lookAt(this.position.x, this.position.y, this.position.z);
+    this.camera.lookAt(
+      this.position.x + shoulder * rx,
+      this.position.y,
+      this.position.z + shoulder * rz,
+    );
 
     return true;
   }
@@ -157,31 +180,43 @@ export class LocalController {
     }
   }
 
-  /** Push the player out of any horizontal obstacle they overlap. */
+  /** Push the player out of any horizontal obstacle they overlap. Iterates a
+   *  few times so corners between two adjacent boxes resolve cleanly. */
   private resolveHorizontal() {
     const r = PLAYER_RADIUS;
-    // Boxes: clamp the player center to outside each box.
-    for (const b of this.obstacles.boxes) {
-      // Skip boxes the player is fully above/below — used by floors only.
-      if (this.position.y - r > b.max.y) continue;
-      if (this.position.y + 2.0 < b.min.y) continue;
-      const cx = Math.max(b.min.x, Math.min(this.position.x, b.max.x));
-      const cz = Math.max(b.min.z, Math.min(this.position.z, b.max.z));
-      const dx = this.position.x - cx;
-      const dz = this.position.z - cz;
-      const d2 = dx * dx + dz * dz;
-      if (d2 >= r * r) continue;
-      // Push along the smaller axis.
-      const px = b.min.x - r - 0.001 < this.position.x && this.position.x < b.max.x + r + 0.001;
-      const pz = b.min.z - r - 0.001 < this.position.z && this.position.z < b.max.z + r + 0.001;
-      if (!px && !pz) continue;
-      const overlapX = Math.min(this.position.x - (b.min.x - r), (b.max.x + r) - this.position.x);
-      const overlapZ = Math.min(this.position.z - (b.min.z - r), (b.max.z + r) - this.position.z);
-      if (overlapX < overlapZ) {
-        this.position.x = this.position.x < (b.min.x + b.max.x) / 2 ? b.min.x - r : b.max.x + r;
-      } else {
-        this.position.z = this.position.z < (b.min.z + b.max.z) / 2 ? b.min.z - r : b.max.z + r;
+    for (let iter = 0; iter < 4; iter++) {
+      let moved = false;
+      for (const b of this.obstacles.boxes) {
+        // Skip boxes the player is fully above/below — used by floors only.
+        if (this.position.y - r > b.max.y) continue;
+        if (this.position.y + 2.0 < b.min.y) continue;
+        const cx = Math.max(b.min.x, Math.min(this.position.x, b.max.x));
+        const cz = Math.max(b.min.z, Math.min(this.position.z, b.max.z));
+        const dx = this.position.x - cx;
+        const dz = this.position.z - cz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= r * r) continue;
+        if (d2 > 1e-6) {
+          // Player center is outside the box, just inside its rounded
+          // corner skin: push radially out along the closest-point vector.
+          // This produces clean corner sliding without a "snap".
+          const d = Math.sqrt(d2);
+          this.position.x = cx + (dx / d) * (r + 1e-3);
+          this.position.z = cz + (dz / d) * (r + 1e-3);
+        } else {
+          // Player center is inside the box (rare, e.g. spawned overlapping):
+          // pop out along whichever axis has the least overlap.
+          const overlapX = Math.min(this.position.x - b.min.x, b.max.x - this.position.x);
+          const overlapZ = Math.min(this.position.z - b.min.z, b.max.z - this.position.z);
+          if (overlapX < overlapZ) {
+            this.position.x = this.position.x < (b.min.x + b.max.x) / 2 ? b.min.x - r : b.max.x + r;
+          } else {
+            this.position.z = this.position.z < (b.min.z + b.max.z) / 2 ? b.min.z - r : b.max.z + r;
+          }
+        }
+        moved = true;
       }
+      if (!moved) break;
     }
     // Cylinders: push out radially.
     for (const c of this.obstacles.cylinders) {
