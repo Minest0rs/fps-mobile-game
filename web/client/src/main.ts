@@ -168,6 +168,7 @@ function frame(now: number) {
     const me = room.state.players.get(room.sessionId);
     if (me) {
       hud.setHp(me.hp);
+      hud.setOxygen(controller.oxygenFraction(), controller.isUnderwater);
       alive = me.hp > 0;
       localAvatar.setVisible(alive);
       localAvatar.setSkin(me.skin);
@@ -180,6 +181,10 @@ function frame(now: number) {
           yaw: controller.yaw,
           pitch: controller.pitch,
         });
+        // Forward any drown damage accumulated this frame so the server
+        // applies it authoritatively (HP must not be set client-side).
+        const drown = controller.consumeDrownDamage();
+        if (drown > 0) room.send("selfDamage", { amount: drown, cause: "drown" });
       }
     }
     hud.refreshScoreboard(room.state);

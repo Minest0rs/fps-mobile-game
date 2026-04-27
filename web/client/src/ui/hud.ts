@@ -7,6 +7,8 @@ const SCOREBOARD_TIMEOUT = 4000;
 export class Hud {
   private hpFill = document.getElementById("hp-fill") as HTMLDivElement;
   private ammo = document.getElementById("ammo") as HTMLDivElement;
+  private oxygenBar = document.getElementById("oxygen-bar") as HTMLDivElement | null;
+  private oxygenFill = document.getElementById("oxygen-fill") as HTMLDivElement | null;
   private feed = document.getElementById("kill-feed") as HTMLDivElement;
   private scoreboardEl = document.getElementById("scoreboard") as HTMLDivElement;
   private scoreboardOpenedAt = 0;
@@ -29,6 +31,16 @@ export class Hud {
 
   setMagazine(value: number) {
     this.ammo.textContent = String(value);
+  }
+
+  /** Show/hide the oxygen bar based on whether the player is underwater
+   *  and update its fill (0..1). Hidden completely when full + above
+   *  water so the HUD isn't cluttered with always-on bars. */
+  setOxygen(fraction: number, underwater: boolean) {
+    if (!this.oxygenBar || !this.oxygenFill) return;
+    const visible = underwater || fraction < 0.999;
+    this.oxygenBar.classList.toggle("hidden", !visible);
+    this.oxygenFill.style.width = `${Math.max(0, Math.min(100, fraction * 100))}%`;
   }
 
   appendKill(k: KillEntryState) {

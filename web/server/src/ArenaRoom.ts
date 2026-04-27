@@ -145,6 +145,23 @@ export class ArenaRoom extends Room<ArenaState> {
       if (victim.hp === 0) this.handleKill(attacker, victim);
     });
 
+    // Self-damage messages — currently used by the client's drowning
+    // mechanic. Capped per-message so a malicious client can't insta-
+    // suicide a player by spamming. A drowning victim is treated as
+    // their own attacker (no kill credit awarded to anyone).
+    this.onMessage<{ amount: number; cause?: string }>("selfDamage", (client, msg) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.hp <= 0) return;
+      const dmg = Math.max(0, Math.min(20, Math.floor(msg?.amount ?? 0)));
+      if (dmg <= 0) return;
+      p.hp = Math.max(0, p.hp - dmg);
+      if (p.hp === 0) {
+        // No kill credit: drowning is environmental death.
+        p.deaths += 1;
+        p.respawnAt = Date.now() + RESPAWN_DELAY_MS;
+      }
+    });
+
     this.setSimulationInterval(() => this.tick(), TICK_MS);
   }
 

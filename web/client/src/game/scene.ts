@@ -24,6 +24,9 @@ export interface SceneRefs {
    *  Used to find the actual point the camera crosshair is pointing at so
    *  bullet trajectories can converge there at any range, not just 30 m. */
   aimMeshes: THREE.Object3D[];
+  /** Atmospheric sky mesh. Hidden during night/storm/sandstorm so the
+   *  scene background colour can paint the horizon instead. */
+  sky: { visible: boolean } & THREE.Object3D;
 }
 
 /** Smoothly varying ground height. Kept identical between the visual ground
@@ -47,7 +50,9 @@ export function createScene(host: HTMLElement): SceneRefs {
   // Warm, hazy daytime air. The fog colour matches the sky's horizon band so
   // distant geometry blends into the skybox instead of cutting off sharply.
   scene.fog = new THREE.Fog(0xc4d4e6, 200, 700);
-  const sunDir = buildSky(scene);
+  const skyBuild = buildSky(scene);
+  const sunDir = skyBuild.sunDir;
+  const sky = skyBuild.sky;
 
   // Vertical FOV is recomputed each resize to keep the horizontal FOV roughly
   // constant — Three.js exposes vertical FOV but FPS players think in
@@ -145,7 +150,7 @@ export function createScene(host: HTMLElement): SceneRefs {
     sun.position.copy(sunDir).multiplyScalar(80).add(sun.target.position);
   };
 
-  return { scene, camera, renderer, arenaHalf, obstacles, heightAt, getBaseFov: () => baseFov, followSun, aimMeshes };
+  return { scene, camera, renderer, arenaHalf, obstacles, heightAt, getBaseFov: () => baseFov, followSun, aimMeshes, sky };
 }
 
 function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[]): Obstacles {
@@ -235,21 +240,25 @@ function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[
   // of the ground-vertex colour code) so what shows through reads as
   // water depth, not grass. Double-sided so it's still visible if the
   // player drops below it.
+  // Water plane spans the full map on x (so the river never abruptly
+  // cuts off at a chunk boundary) and a generous 90 m on z so the water
+  // surface always covers the river ribbon, which the heightfield clamps
+  // below -1.2 m anywhere `riverFactor > 0.25`.
   const water = new THREE.Mesh(
-    new THREE.PlaneGeometry(half * 1.7, 70),
+    new THREE.PlaneGeometry(half * 2, 90),
     new THREE.MeshStandardMaterial({
       color: 0x2c6fa8,
       roughness: 0.45,
       metalness: 0.15,
       transparent: true,
-      opacity: 0.74,
+      opacity: 0.78,
       side: THREE.DoubleSide,
-      depthWrite: true,
+      depthWrite: false, // translucent: don't occlude underwater bed colour
     }),
   );
   water.rotation.x = -Math.PI / 2;
-  water.position.set(0, -0.6, 0); // bed dips to -6 m so there's clear depth
-  water.renderOrder = 2; // draw above any nearby translucent grass
+  water.position.set(0, -0.4, 0); // surface above the clamped river bed
+  water.renderOrder = 2;
   scene.add(water);
 
   // Distant decorative hills — green forested mounds beyond the play area.
@@ -455,7 +464,7 @@ function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[
 /** Atmospheric sky based on the Preetham analytic daylight model (built-in
  *  three.js example shader). Returns the sun's normalised direction so the
  *  scene's directional light can be aligned with it. */
-function buildSky(scene: THREE.Scene): THREE.Vector3 {
+function buildSky(scene: THREE.Scene): { sunDir: THREE.Vector3; sky: THREE.Object3D } {
   const sky = new Sky();
   sky.scale.setScalar(8000);
   const u = sky.material.uniforms;
@@ -472,7 +481,7 @@ function buildSky(scene: THREE.Scene): THREE.Vector3 {
   const sunDir = new THREE.Vector3().setFromSphericalCoords(1, phi, theta);
   u.sunPosition.value.copy(sunDir);
   scene.add(sky);
-  return sunDir;
+  return { sunDir, sky };
 }
 
 function mulberry32(seed: number) {

@@ -40,16 +40,28 @@ export function terrainHeight(x: number, z: number, half: number): number {
   const mx = -half * 0.45, mz = half * 0.45;
   const md = Math.hypot(x - mx, z - mz);
   const mountain = Math.exp(-(md * md) / (90 * 90)) * 55;
-  const riverWidth = 26;
+  const riverWidth = 32;
   const riverFactor = Math.exp(-(z * z) / (riverWidth * riverWidth));
   const river = -6 * riverFactor;
-  const hills =
+  // Hills are heavily damped inside the river ribbon so stray peaks
+  // can't poke up through the water surface.
+  const hillDamp = 1 - riverFactor * 0.85;
+  const hills = (
     Math.sin(x * 0.035) * 1.4 +
     Math.cos(z * 0.045) * 1.1 +
     Math.sin((x + z) * 0.025) * 0.9 +
-    Math.cos((x - z) * 0.030) * 0.7;
+    Math.cos((x - z) * 0.030) * 0.7
+  ) * hillDamp;
   const spawnInfluence = Math.exp(-(r * r) / (22 * 22));
-  return (mountain + river + hills) * (1 - spawnInfluence);
+  let h = (mountain + river + hills) * (1 - spawnInfluence);
+  // Inside the river ribbon, clamp the bed below the water surface
+  // (water sits at y = -0.4) so the water plane never gets pierced
+  // by a stray hill peak (Devin Review BUG_0009).
+  if (riverFactor > 0.25) {
+    const cap = -1.2 - 4 * riverFactor; // -1.2 at edge → -5.2 at centre
+    if (h > cap) h = cap;
+  }
+  return h;
 }
 
 /** Returns true if the terrain *between* (x1,z1) and (x2,z2) rises above

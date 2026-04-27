@@ -114,6 +114,13 @@ button:active { transform: scale(0.98); }
 }
 #hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #5dffa3, #2cd97a); transition: width 0.15s; }
 
+#oxygen-bar {
+  position: absolute; left: 16px; bottom: 38px;
+  width: 220px; height: 10px; background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,255,255,0.18); border-radius: 5px; overflow: hidden;
+}
+#oxygen-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #76d6ff, #2c9bd9); transition: width 0.1s; }
+
 #ammo { position: absolute; right: 16px; bottom: 16px; font-size: 22px; font-weight: 700; opacity: 0.85; }
 
 #kill-feed {

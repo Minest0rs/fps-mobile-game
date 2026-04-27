@@ -7,6 +7,20 @@ const JUMP_VELOCITY = 8.0;
 const MOVE_SPEED = 6.0;
 const PITCH_LIMIT = 1.1;
 const PLAYER_RADIUS = 0.45;
+/** Movement smoothing — players accelerate from zero and decelerate to
+ *  zero over ~0.18 s instead of teleporting to full speed. Gives the
+ *  character weight without making controls feel sluggish. */
+const ACCEL_PER_SEC = 38; // m/s² (full-speed in ~0.16 s from rest)
+const DECEL_PER_SEC = 30;
+/** Underwater behaviour: lowered movement, gravity, and oxygen drain. */
+const UNDERWATER_SPEED_MULT = 0.55;
+const UNDERWATER_GRAVITY_MULT = 0.35;
+/** Water surface y (must match scene.ts water plane). */
+const WATER_Y = -0.4;
+/** Total oxygen capacity (seconds of submerged time). */
+const OXYGEN_MAX = 12;
+/** Damage per second while oxygen is empty and head still underwater. */
+const DROWN_DPS = 8;
 // Third-person camera offsets. ADS arcs the camera over the right shoulder
 // rather than pulling it straight in toward the player's back: that keeps
 // the centre of the screen clear of the avatar's body so the crosshair is
@@ -47,6 +61,21 @@ export class LocalController {
   private recoilYaw = 0;
   private velocityY = 0;
   private grounded = true;
+  /** Smoothed horizontal velocity (m/s in world space). Eased toward
+   *  the input-derived target velocity for accel/decel feel. */
+  private velX = 0;
+  private velZ = 0;
+  /** Walk distance accumulator drives the head-bob sinusoid. Reset when
+   *  the player stops or leaves the ground. */
+  private bobPhase = 0;
+  /** Oxygen state. Underwater the timer drains; above water it regens
+   *  toward OXYGEN_MAX. Drowning damage accumulates while oxygen == 0
+   *  and the head is still submerged. Read by HUD + main loop. */
+  oxygen = OXYGEN_MAX;
+  isUnderwater = false;
+  /** Hp damage to be applied externally (main loop reads + clears each
+   *  frame, then forwards to the room as a self-damage message). */
+  pendingDrownDamage = 0;
 
   constructor(
     private camera: THREE.PerspectiveCamera,
@@ -101,20 +130,42 @@ export class LocalController {
     this.recoilPitch *= recoilDecay;
     this.recoilYaw *= recoilDecay;
 
+    // Underwater check — head is at (position.y) which is eye height
+    // (1.6 m above feet). When the eye drops below the water surface,
+    // movement slows, gravity is reduced, and oxygen drains.
+    this.isUnderwater = this.position.y < WATER_Y;
+    const speedMult = this.isUnderwater ? UNDERWATER_SPEED_MULT : 1;
+
     const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right   = new THREE.Vector3(Math.cos(this.yaw),  0, -Math.sin(this.yaw));
-    const move = new THREE.Vector3()
+    const inputDir = new THREE.Vector3()
       .addScaledVector(forward, input.move.y)
       .addScaledVector(right, input.move.x);
-    if (move.lengthSq() > 1) move.normalize();
-    move.multiplyScalar(MOVE_SPEED * dt);
+    if (inputDir.lengthSq() > 1) inputDir.normalize();
+    const targetVx = inputDir.x * MOVE_SPEED * speedMult;
+    const targetVz = inputDir.z * MOVE_SPEED * speedMult;
 
-    if (input.jumpRequested && this.grounded) {
+    // Smooth velocity toward the target — accelerate when the player is
+    // pushing in a direction, decelerate to zero on release. This makes
+    // strafing feel weighted instead of teleport-snappy.
+    const accel = inputDir.lengthSq() > 0.01 ? ACCEL_PER_SEC : DECEL_PER_SEC;
+    const ax = targetVx - this.velX;
+    const az = targetVz - this.velZ;
+    const aMag = Math.hypot(ax, az);
+    if (aMag > 1e-6) {
+      const k = Math.min(1, (accel * dt) / aMag);
+      this.velX += ax * k;
+      this.velZ += az * k;
+    }
+    const move = new THREE.Vector3(this.velX * dt, 0, this.velZ * dt);
+
+    if (input.jumpRequested && this.grounded && !this.isUnderwater) {
       this.velocityY = JUMP_VELOCITY;
       this.grounded = false;
     }
 
-    this.velocityY += this.gravity * dt;
+    const grav = this.gravity * (this.isUnderwater ? UNDERWATER_GRAVITY_MULT : 1);
+    this.velocityY += grav * dt;
     const dy = this.velocityY * dt;
 
     // Move on each horizontal axis separately so the player slides along
@@ -130,6 +181,8 @@ export class LocalController {
     if (groundAfterX - groundNow < Math.abs(move.x) * MAX_STEP_RISE + 0.01) {
       this.position.x = tryX;
       this.resolveHorizontal();
+    } else {
+      this.velX = 0; // hit a too-steep slope, drop X velocity
     }
     const groundMid = this.heightAt(this.position.x, this.position.z);
     const tryZ = this.position.z + move.z;
@@ -137,6 +190,8 @@ export class LocalController {
     if (groundAfterZ - groundMid < Math.abs(move.z) * MAX_STEP_RISE + 0.01) {
       this.position.z = tryZ;
       this.resolveHorizontal();
+    } else {
+      this.velZ = 0;
     }
 
     const oldFeet = this.position.y - 1.6;
@@ -185,14 +240,53 @@ export class LocalController {
       camGround + 0.4,
       this.position.y + heightOffset - camDist * sinP,
     );
-    this.camera.position.set(cx, cy, cz);
+    // Head bob — only when moving on the ground. Adds a tiny vertical
+    // sinusoid to the camera and look-at target so the world subtly
+    // bounces in time with footsteps. Disabled while ADS so the
+    // crosshair stays stable when aiming.
+    const horizSpeed = Math.hypot(this.velX, this.velZ);
+    if (this.grounded && horizSpeed > 0.5 && this.aimBlend < 0.5) {
+      this.bobPhase += dt * (6 + horizSpeed * 0.3);
+    } else {
+      this.bobPhase *= Math.pow(0.001, dt); // ease back to 0 quickly
+    }
+    const bobAmt = Math.min(1, horizSpeed / MOVE_SPEED) * (1 - this.aimBlend);
+    const bobY = Math.sin(this.bobPhase * 2) * 0.045 * bobAmt;
+    const bobX = Math.cos(this.bobPhase) * 0.025 * bobAmt;
+
+    this.camera.position.set(cx, cy + bobY, cz);
     this.camera.lookAt(
-      this.position.x + shoulder * rx,
-      this.position.y + heightOffset,
-      this.position.z + shoulder * rz,
+      this.position.x + shoulder * rx + bobX * rx,
+      this.position.y + heightOffset + bobY,
+      this.position.z + shoulder * rz + bobX * rz,
     );
 
+    // Oxygen + drown logic. Submerged head depletes oxygen; surfacing
+    // regenerates it (faster than depletion so resurfacing recovers).
+    // When oxygen hits 0 and the head stays submerged, accumulate
+    // damage that the main loop reads + sends to the room.
+    if (this.isUnderwater) {
+      this.oxygen = Math.max(0, this.oxygen - dt);
+      if (this.oxygen <= 0) this.pendingDrownDamage += DROWN_DPS * dt;
+    } else {
+      this.oxygen = Math.min(OXYGEN_MAX, this.oxygen + dt * 2);
+    }
+
     return true;
+  }
+
+  /** Read + clear the accumulated drown damage. Returns whole HP units
+   *  (the main loop sends one self-damage message per integer). */
+  consumeDrownDamage(): number {
+    if (this.pendingDrownDamage < 1) return 0;
+    const whole = Math.floor(this.pendingDrownDamage);
+    this.pendingDrownDamage -= whole;
+    return whole;
+  }
+
+  /** Oxygen as a 0..1 fraction for HUD bars. */
+  oxygenFraction(): number {
+    return this.oxygen / OXYGEN_MAX;
   }
 
   /** World-space position of the avatar's gun barrel, used as the spawn point

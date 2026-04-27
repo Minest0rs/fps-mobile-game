@@ -24,6 +24,10 @@ export interface EventCtx {
   /** Original ambient/sun intensities so night mode can restore them. */
   origAmbient: number;
   origSun: number;
+  /** Original light colours so events can restore the exact scene setup
+   *  values rather than hardcoded constants that drift out of sync. */
+  origAmbientColor: number;
+  origSunColor: number;
   /** Cached references. */
   ambient: THREE.HemisphereLight | null;
   sun: THREE.DirectionalLight | null;
@@ -53,6 +57,8 @@ export function createEventCtx(scene: THREE.Scene): EventCtx {
     meteorAcc: 0,
     origAmbient: lights.ambient?.intensity ?? 1.0,
     origSun: lights.sun?.intensity ?? 1.5,
+    origAmbientColor: lights.ambient?.color.getHex() ?? 0xbcd6ff,
+    origSunColor: lights.sun?.color.getHex() ?? 0xfff1d6,
     ambient: lights.ambient,
     sun: lights.sun,
     nextLightningAt: 0,
@@ -77,11 +83,17 @@ export function applyMatchEvents(
   if (events.night !== ctx.applied.night) {
     if (ctx.ambient) ctx.ambient.intensity = events.night ? ctx.origAmbient * 0.18 : ctx.origAmbient;
     if (ctx.sun) ctx.sun.intensity = events.night ? ctx.origSun * 0.20 : ctx.origSun;
-    if (ctx.sun) ctx.sun.color.setHex(events.night ? 0x6f8aff : 0xfff1d1);
-    // Restore to null when night ends so the Sky mesh renders the daytime
-    // sky again. Self-assigning would leave the dark background in place
-    // permanently (Devin Review BUG_0001).
-    refs.scene.background = events.night ? new THREE.Color(0x07091a) : null;
+    if (ctx.sun) ctx.sun.color.setHex(events.night ? 0x6f8aff : ctx.origSunColor);
+    // Hide the daylight Sky mesh during night so scene.background paints
+    // the horizon dark. Self-assigning would leave the dark background in
+    // place permanently (Devin Review BUG_0001).
+    if (events.night) {
+      refs.sky.visible = false;
+      refs.scene.background = new THREE.Color(0x07091a);
+    } else if (!events.thunderstorm && !events.sandstorm) {
+      refs.sky.visible = true;
+      refs.scene.background = null;
+    }
   }
 
   // --- Fog (heavier than the default haze) ---
@@ -100,11 +112,20 @@ export function applyMatchEvents(
   if (events.sandstorm !== ctx.applied.sandstorm) {
     if (events.sandstorm) {
       refs.scene.fog = new THREE.Fog(0xc8a35a, 12, 110);
-      // Tint the ambient warmer too so the whole scene feels dust-storm.
       if (ctx.ambient) ctx.ambient.color.setHex(0xd5a96a);
+      // The Sky shader paints a blue daylight sky regardless of fog —
+      // hide it during sandstorm and paint the scene background sandy
+      // yellow so the horizon blends with the dust fog.
+      refs.sky.visible = false;
+      refs.scene.background = new THREE.Color(0xc8a35a);
     } else {
       if (!events.fog) refs.scene.fog = new THREE.Fog(0xc4d4e6, 200, 700);
-      if (ctx.ambient) ctx.ambient.color.setHex(0x9fbcd6);
+      if (ctx.ambient) ctx.ambient.color.setHex(ctx.origAmbientColor);
+      // Restore the daylight sky unless another event needs it hidden.
+      if (!events.thunderstorm && !events.night) {
+        refs.sky.visible = true;
+        refs.scene.background = null;
+      }
     }
   }
 
@@ -112,13 +133,17 @@ export function applyMatchEvents(
   if (events.thunderstorm !== ctx.applied.thunderstorm) {
     if (events.thunderstorm) {
       // Darken the sky to a stormy slate. Sun goes cool/dim.
+      refs.sky.visible = false;
       refs.scene.background = new THREE.Color(0x1a2230);
       if (ctx.sun) ctx.sun.intensity = ctx.origSun * 0.35;
       if (ctx.ambient) ctx.ambient.intensity = ctx.origAmbient * 0.55;
       ctx.nextLightningAt = performance.now() / 1000 + 1 + Math.random() * 4;
     } else {
-      // Restore (unless night is also on, which has its own dark sky).
-      if (!events.night) refs.scene.background = null;
+      // Restore (unless night/sandstorm is also on).
+      if (!events.night && !events.sandstorm) {
+        refs.sky.visible = true;
+        refs.scene.background = null;
+      }
       if (ctx.sun) ctx.sun.intensity = events.night ? ctx.origSun * 0.20 : ctx.origSun;
       if (ctx.ambient) ctx.ambient.intensity = events.night ? ctx.origAmbient * 0.18 : ctx.origAmbient;
       ctx.lightningFlashFor = 0;

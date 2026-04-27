@@ -51,21 +51,25 @@ export function spawnBots(
     bot.id = `bot:${i}:${Math.random().toString(36).slice(2, 7)}`;
     bot.isBot = true;
     bot.skin = ["neon", "crimson", "cyber", "gold"][i % 4];
-    // Pick an unused name where possible.
     let nm = BOT_NAMES[i % BOT_NAMES.length];
     let suffix = 1;
     while (usedNames.has(nm)) nm = `${BOT_NAMES[i % BOT_NAMES.length]} ${++suffix}`;
     usedNames.add(nm);
     bot.name = nm;
-    // Bots cycle through the available weapons so matches feel varied.
     const wIds = Object.keys(WEAPONS);
     bot.weapon = wIds[i % wIds.length];
     bot.hp = profile.hp;
     bot.botSkill = profile.hitChance;
-    const sp = spawnPoint();
-    bot.x = sp.x; bot.y = sp.y; bot.z = sp.z;
-    bot.botTargetX = sp.x;
-    bot.botTargetZ = sp.z;
+    // Spread bots across the map at spawn instead of clustering in the
+    // central spawn ring — without this they all aggro on each other in
+    // a 60 m radius and stand still at their preferred engagement range.
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const r = 80 + Math.random() * 220;
+    bot.x = Math.cos(angle) * r;
+    bot.z = Math.sin(angle) * r;
+    bot.y = 5; // tickBots will snap to terrain on first frame
+    bot.botTargetX = bot.x;
+    bot.botTargetZ = bot.z;
     state.players.set(bot.id, bot);
   }
 }
@@ -108,74 +112,86 @@ export function tickBots(
     }
 
     // Pick the nearest live entity (human OR other bot). Humans are
-    // weighted as if they were ~30% closer so a bot will turn on its
-    // peers when no human is nearby, but still prefers the player when
-    // both are in range. This makes bot lobbies feel alive even when
-    // the human is hiding.
+    // weighted as if they were ~30% closer so a bot prefers the player
+    // when both are in range, but still aggros on its peers when no
+    // human is nearby. This keeps bot lobbies alive while you hide.
     let nearest: Player | null = null;
     let nearestScore = Infinity;
     state.players.forEach((p) => {
       if (p === bot || p.hp <= 0) return;
       const d2 = sqDistXZ(bot, p);
-      const score = p.isBot ? d2 : d2 * 0.5; // lower score = more attractive
+      const score = p.isBot ? d2 : d2 * 0.5;
       if (score < nearestScore) { nearestScore = score; nearest = p; }
     });
 
-    if (!nearest) return;
+    const obstacles = getObstacles(arenaHalf);
+    const w = getWeapon(bot.weapon);
+    const cooldown = Math.max(w.fireRateMs, profile.fireDelayMs);
+    const botRange = Math.min(w.maxRange, 60);
+    const lowHp = bot.hp < profile.hp * 0.35;
+
+    // No live targets in range → wander toward a random patrol point so
+    // bots aren't standing perfectly still. Re-pick when close.
+    if (!nearest) {
+      const dxw = bot.botTargetX - bot.x;
+      const dzw = bot.botTargetZ - bot.z;
+      const dw = Math.sqrt(dxw * dxw + dzw * dzw);
+      if (dw < 6) {
+        bot.botTargetX = (Math.random() - 0.5) * arenaHalf * 1.4;
+        bot.botTargetZ = (Math.random() - 0.5) * arenaHalf * 1.4;
+      } else {
+        const step = profile.speed * 0.6 * dt;
+        bot.x = clamp(bot.x + (dxw / dw) * step, -arenaHalf, arenaHalf);
+        bot.z = clamp(bot.z + (dzw / dw) * step, -arenaHalf, arenaHalf);
+        bot.yaw = Math.atan2(-dxw, -dzw);
+      }
+      return;
+    }
     const target = nearest as Player;
 
-    // Walk toward the target, but stop at a comfortable engagement range
-    // (~20 m) so bots don't faceplant on the player.
     const dx = target.x - bot.x;
     const dz = target.z - bot.z;
     const dist = Math.sqrt(dx * dx + dz * dz) || 1;
-    const desired = 18;
-    if (dist > desired) {
-      const step = profile.speed * dt;
-      bot.x += (dx / dist) * step;
-      bot.z += (dz / dist) * step;
-      bot.x = clamp(bot.x, -arenaHalf, arenaHalf);
-      bot.z = clamp(bot.z, -arenaHalf, arenaHalf);
-    }
-    // Always face the target. The avatar's forward in this codebase is
-    // `(-sin(yaw), 0, -cos(yaw))` (matches `controller.ts` and the gun's
-    // local -Z), so to face direction `(dx, dz)` we need `atan2(-dx, -dz)`.
-    // Using `atan2(dx, dz)` would point the avatar 180° away from the
-    // target (Devin Review BUG_0003).
+    // Always face the target. forward is `(-sin(yaw), 0, -cos(yaw))` so
+    // to face direction `(dx, dz)` we need `atan2(-dx, -dz)`.
     bot.yaw = Math.atan2(-dx, -dz);
 
-    // Fire if the target is within weapon range and our cooldown is up.
-    const w = getWeapon(bot.weapon);
-    const cooldown = Math.max(w.fireRateMs, profile.fireDelayMs);
-    // Cap bot effective range — even a sniper bot only fires within 60 m
-    // so the open 600 m arena doesn't turn into a turret simulator.
-    const botRange = Math.min(w.maxRange, 60);
-    if (dist < botRange && now - bot.lastShotAt > cooldown) {
-      // LOS check 1: terrain. If a hill is in the way between the bot's
-      // eye and the target's eye, the shot is suppressed.
-      const eyeY1 = bot.y;
-      const eyeY2 = target.y;
-      if (segmentBlockedByTerrain(bot.x, bot.z, eyeY1, target.x, target.z, eyeY2, arenaHalf)) {
-        bot.lastShotAt = now;
-        return;
-      }
-      // LOS check 2: obstacles (rock / shack / crate). Players can take
-      // cover behind these. Trees are deliberately excluded — narrow
-      // trunks shouldn't grant LOS-immunity.
-      const obstacles = getObstacles(arenaHalf);
-      if (segmentBlockedByObstacles(bot.x, bot.z, target.x, target.z, obstacles)) {
-        bot.lastShotAt = now;
-        return;
-      }
-      // Most bot shots miss. We also bleed off accuracy with distance so
-      // bots feel weaker the further you are from them — important for
-      // making the open 600 m arena playable against AI.
+    // Pre-compute LOS so we can both gate firing AND drive movement.
+    const losTerrain = segmentBlockedByTerrain(bot.x, bot.z, bot.y, target.x, target.z, target.y, arenaHalf);
+    const losObstacle = !losTerrain && segmentBlockedByObstacles(bot.x, bot.z, target.x, target.z, obstacles);
+    const hasLOS = !losTerrain && !losObstacle;
+
+    // Movement: low HP retreats, no LOS pushes forward to flank, with
+    // LOS within range strafes sideways at a comfortable distance.
+    const desired = 18;
+    const moveStep = profile.speed * dt;
+    let mx = 0, mz = 0;
+    if (lowHp && hasLOS) {
+      // Backpedal away from the target.
+      mx = -(dx / dist) * moveStep;
+      mz = -(dz / dist) * moveStep;
+    } else if (!hasLOS || dist > desired + 4) {
+      // Push toward the target so we can break cover / close distance.
+      mx = (dx / dist) * moveStep;
+      mz = (dz / dist) * moveStep;
+    } else if (dist < desired - 6) {
+      // Too close, back off slightly.
+      mx = -(dx / dist) * moveStep * 0.6;
+      mz = -(dz / dist) * moveStep * 0.6;
+    } else if (hasLOS) {
+      // Strafe sideways while engaging — perpendicular to the target dir.
+      const sign = (Math.floor(now / 1700) % 2 === 0) ? 1 : -1;
+      mx = (-dz / dist) * moveStep * 0.7 * sign;
+      mz = ( dx / dist) * moveStep * 0.7 * sign;
+    }
+    bot.x = clamp(bot.x + mx, -arenaHalf, arenaHalf);
+    bot.z = clamp(bot.z + mz, -arenaHalf, arenaHalf);
+
+    // Fire only when LOS is clean and within range.
+    if (hasLOS && dist < botRange && now - bot.lastShotAt > cooldown) {
       const distFalloff = Math.max(0, 1 - dist / botRange);
       const effectiveChance = profile.hitChance * (0.4 + 0.6 * distFalloff);
       if (Math.random() < effectiveChance) {
-        // Bot damage is also reduced — weapon damage is calibrated for
-        // human aim (single targeted shot per click), and a bot shooting
-        // at human cadence at full damage feels overwhelming.
         const dmg = Math.max(4, Math.round(w.damage * 0.5));
         events.push({ attackerId: bot.id, victimId: target.id, damage: dmg });
       }
