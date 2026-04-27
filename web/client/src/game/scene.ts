@@ -20,7 +20,10 @@ export function createScene(host: HTMLElement): SceneRefs {
   scene.background = new THREE.Color(0x1a2640);
   scene.fog = new THREE.Fog(0x1a2640, 40, 120);
 
-  const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
+  // Vertical FOV is recomputed each resize to keep the horizontal FOV roughly
+  // constant — Three.js exposes vertical FOV but FPS players think in
+  // horizontal terms, and a fixed vfov feels cramped in portrait/mobile.
+  const camera = new THREE.PerspectiveCamera(80, 1, 0.05, 200);
   // Sit the camera somewhere visible until the server tells us where to spawn.
   // (0,1.6,0) puts us inside the center pillar and shows nothing — avoid that.
   camera.position.set(8, 1.6, 8);
@@ -81,9 +84,18 @@ export function createScene(host: HTMLElement): SceneRefs {
   const arenaHalf = 19;
   const obstacles = buildArena(scene, arenaHalf);
 
+  const TARGET_HFOV_DEG = 100; // wide enough to feel like a real FPS
   const fit = () => {
     renderer.setSize(host.clientWidth, host.clientHeight, false);
-    camera.aspect = host.clientWidth / Math.max(1, host.clientHeight);
+    const aspect = host.clientWidth / Math.max(1, host.clientHeight);
+    camera.aspect = aspect;
+    // Convert target horizontal FOV → vertical FOV given the current aspect.
+    const hfov = THREE.MathUtils.degToRad(TARGET_HFOV_DEG);
+    let vfov = 2 * Math.atan(Math.tan(hfov / 2) / aspect);
+    // Clamp so portrait phones don't get a fish-eye lens.
+    vfov = Math.min(vfov, THREE.MathUtils.degToRad(95));
+    vfov = Math.max(vfov, THREE.MathUtils.degToRad(60));
+    camera.fov = THREE.MathUtils.radToDeg(vfov);
     camera.updateProjectionMatrix();
   };
   window.addEventListener("resize", fit);
