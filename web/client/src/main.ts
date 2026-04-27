@@ -45,12 +45,35 @@ const menu = setupMenu(async ({ name, skin }) => {
     bindRoom(room);
     document.getElementById("hud")!.classList.remove("hidden");
     menu.hide();
-    if (!isTouchDevice()) input.requestPointerLock();
+    if (isTouchDevice()) {
+      await enterFullscreenAndLandscape();
+    } else {
+      input.requestPointerLock();
+    }
   } catch (e: any) {
     console.error(e);
     menu.setStatus(`Failed to join: ${e?.message ?? e}`);
   }
 });
+
+async function enterFullscreenAndLandscape() {
+  const root = document.documentElement;
+  try {
+    if (root.requestFullscreen) await root.requestFullscreen({ navigationUI: "hide" } as any);
+    else if ((root as any).webkitRequestFullscreen) (root as any).webkitRequestFullscreen();
+  } catch (e) {
+    console.warn("fullscreen request failed:", e);
+  }
+  try {
+    const orient = (screen as any).orientation;
+    if (orient && typeof orient.lock === "function") {
+      await orient.lock("landscape");
+    }
+  } catch (e) {
+    // Many mobile browsers (incl. iOS Safari) refuse orientation lock — that's fine.
+    console.warn("orientation lock failed:", e);
+  }
+}
 
 function bindRoom(r: Room<ArenaStateLike>) {
   hud.bind(r, r.sessionId);

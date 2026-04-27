@@ -11,7 +11,7 @@ export interface AimResult {
 export function aim(
   camera: THREE.PerspectiveCamera,
   avatars: Map<string, Avatar>,
-  range = 80,
+  range = 200,
 ): AimResult {
   const origin = camera.position.clone();
   const dir = new THREE.Vector3();
