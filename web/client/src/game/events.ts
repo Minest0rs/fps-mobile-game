@@ -7,6 +7,8 @@ export interface MatchEvents {
   lowGravity: boolean;
   meteorShower: boolean;
   fog: boolean;
+  thunderstorm: boolean;
+  sandstorm: boolean;
 }
 
 /** State for client-side match-event effects. We apply changes once when an
@@ -25,6 +27,10 @@ export interface EventCtx {
   /** Cached references. */
   ambient: THREE.HemisphereLight | null;
   sun: THREE.DirectionalLight | null;
+  /** Thunderstorm: counter that triggers a screen-flash + ambient kick at
+   *  random intervals while the event is active. */
+  nextLightningAt: number;
+  lightningFlashFor: number;
 }
 
 export function createEventCtx(scene: THREE.Scene): EventCtx {
@@ -39,13 +45,18 @@ export function createEventCtx(scene: THREE.Scene): EventCtx {
     if (!lights.sun && obj.isDirectionalLight) lights.sun = obj as unknown as THREE.DirectionalLight;
   });
   return {
-    applied: { night: false, lowGravity: false, meteorShower: false, fog: false },
+    applied: {
+      night: false, lowGravity: false, meteorShower: false, fog: false,
+      thunderstorm: false, sandstorm: false,
+    },
     meteors: [],
     meteorAcc: 0,
     origAmbient: lights.ambient?.intensity ?? 1.0,
     origSun: lights.sun?.intensity ?? 1.5,
     ambient: lights.ambient,
     sun: lights.sun,
+    nextLightningAt: 0,
+    lightningFlashFor: 0,
   };
 }
 
@@ -74,11 +85,56 @@ export function applyMatchEvents(
   }
 
   // --- Fog (heavier than the default haze) ---
+  // Note: Fog and Sandstorm both write to scene.fog. Since the server
+  // scheduler only ever runs one event at a time, they don't conflict;
+  // when either turns off we restore the default haze.
   if (events.fog !== ctx.applied.fog) {
     if (events.fog) {
       refs.scene.fog = new THREE.Fog(0x9aa9b8, 30, 220);
-    } else {
+    } else if (!events.sandstorm) {
       refs.scene.fog = new THREE.Fog(0xc4d4e6, 200, 700);
+    }
+  }
+
+  // --- Sandstorm (very thick yellow-tinted fog) ---
+  if (events.sandstorm !== ctx.applied.sandstorm) {
+    if (events.sandstorm) {
+      refs.scene.fog = new THREE.Fog(0xc8a35a, 12, 110);
+      // Tint the ambient warmer too so the whole scene feels dust-storm.
+      if (ctx.ambient) ctx.ambient.color.setHex(0xd5a96a);
+    } else {
+      if (!events.fog) refs.scene.fog = new THREE.Fog(0xc4d4e6, 200, 700);
+      if (ctx.ambient) ctx.ambient.color.setHex(0x9fbcd6);
+    }
+  }
+
+  // --- Thunderstorm: random lightning flashes + darkened sky ---
+  if (events.thunderstorm !== ctx.applied.thunderstorm) {
+    if (events.thunderstorm) {
+      // Darken the sky to a stormy slate. Sun goes cool/dim.
+      refs.scene.background = new THREE.Color(0x1a2230);
+      if (ctx.sun) ctx.sun.intensity = ctx.origSun * 0.35;
+      if (ctx.ambient) ctx.ambient.intensity = ctx.origAmbient * 0.55;
+      ctx.nextLightningAt = performance.now() / 1000 + 1 + Math.random() * 4;
+    } else {
+      // Restore (unless night is also on, which has its own dark sky).
+      if (!events.night) refs.scene.background = null;
+      if (ctx.sun) ctx.sun.intensity = events.night ? ctx.origSun * 0.20 : ctx.origSun;
+      if (ctx.ambient) ctx.ambient.intensity = events.night ? ctx.origAmbient * 0.18 : ctx.origAmbient;
+      ctx.lightningFlashFor = 0;
+    }
+  }
+  if (events.thunderstorm) {
+    const t = performance.now() / 1000;
+    if (t >= ctx.nextLightningAt) {
+      ctx.lightningFlashFor = 0.18; // half-second flash with quick decay
+      ctx.nextLightningAt = t + 2.5 + Math.random() * 6;
+    }
+    if (ctx.lightningFlashFor > 0) {
+      ctx.lightningFlashFor = Math.max(0, ctx.lightningFlashFor - dt);
+      const flashAmt = ctx.lightningFlashFor / 0.18;
+      if (ctx.sun) ctx.sun.intensity = ctx.origSun * (0.35 + 2.4 * flashAmt);
+      if (ctx.ambient) ctx.ambient.intensity = ctx.origAmbient * (0.55 + 2.0 * flashAmt);
     }
   }
 

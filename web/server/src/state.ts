@@ -46,6 +46,8 @@ export class MatchEvents extends Schema {
   @type("boolean") lowGravity = false;
   @type("boolean") meteorShower = false;
   @type("boolean") fog = false;
+  @type("boolean") thunderstorm = false;
+  @type("boolean") sandstorm = false;
 }
 
 export class ArenaState extends Schema {

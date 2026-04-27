@@ -113,7 +113,7 @@ export function createScene(host: HTMLElement): SceneRefs {
     scene.add(pl);
   }
 
-  const arenaHalf = 300;
+  const arenaHalf = 400;
   const aimMeshes: THREE.Object3D[] = [];
   const obstacles = buildArena(scene, arenaHalf, aimMeshes);
   const heightAt = (x: number, z: number) => terrainHeight(x, z, arenaHalf);
@@ -227,21 +227,28 @@ function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[
   outer.receiveShadow = true;
   addSolid(outer);
 
-  // River water — fully opaque clear-blue ribbon along z = 0. We trade a
-  // little visual depth for a clean look: any translucency lets the green
-  // distant hills / outer landscape bleed through and reads to the player
-  // as a "green smear above the water". Opaque + roughness near 1 +
-  // metalness 0 keeps the surface a flat blue regardless of view angle.
+  // River water — translucent blue ribbon along z = 0. Grass tufts skip
+  // any (x, z) where terrain dips below 0.3 m so no green meshes sit
+  // *behind* the water plane to bleed through; the outer landscape is
+  // buried at y = -12 well below the river surface; and the river bed
+  // inside the heightfield is tinted muddy blue (the `h < -2.0` branch
+  // of the ground-vertex colour code) so what shows through reads as
+  // water depth, not grass. Double-sided so it's still visible if the
+  // player drops below it.
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(half * 1.7, 70),
     new THREE.MeshStandardMaterial({
-      color: 0x1d4f7a, roughness: 0.78, metalness: 0.0,
-      transparent: false, opacity: 1.0,
+      color: 0x2c6fa8,
+      roughness: 0.45,
+      metalness: 0.15,
+      transparent: true,
+      opacity: 0.74,
       side: THREE.DoubleSide,
+      depthWrite: true,
     }),
   );
   water.rotation.x = -Math.PI / 2;
-  water.position.set(0, -1.0, 0);
+  water.position.set(0, -0.6, 0); // bed dips to -6 m so there's clear depth
   water.renderOrder = 2; // draw above any nearby translucent grass
   scene.add(water);
 

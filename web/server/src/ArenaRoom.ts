@@ -10,26 +10,43 @@ interface JoinOpts {
   skin?: string;
   weapon?: string;
   bots?: { enabled?: boolean; count?: number; difficulty?: BotDifficulty };
-  events?: { night?: boolean; lowGravity?: boolean; meteorShower?: boolean; fog?: boolean };
+  events?: {
+    night?: boolean;
+    lowGravity?: boolean;
+    meteorShower?: boolean;
+    fog?: boolean;
+    thunderstorm?: boolean;
+    sandstorm?: boolean;
+  };
 }
 
 /** Channels eligible for random-event scheduling. Mirrors `MatchEvents` in
  *  the schema. Kept narrow so the scheduler can iterate type-safely. */
-type EventKey = "night" | "lowGravity" | "meteorShower" | "fog";
-const EVENT_KEYS: EventKey[] = ["night", "lowGravity", "meteorShower", "fog"];
+type EventKey =
+  | "night"
+  | "lowGravity"
+  | "meteorShower"
+  | "fog"
+  | "thunderstorm"
+  | "sandstorm";
+const EVENT_KEYS: EventKey[] = [
+  "night", "lowGravity", "meteorShower", "fog", "thunderstorm", "sandstorm",
+];
 
-/** Random scheduling parameters — events fire on independent timers so
- *  multiple events can stack (e.g. night + meteor shower) for some matches
- *  but never spam the player with overlapping toggles every tick. */
-const EVENT_OFF_MIN_MS = 35_000;   // shortest gap between fires
-const EVENT_OFF_MAX_MS = 95_000;   // longest gap between fires
+/** Random scheduling parameters — only one event is active at any time.
+ *  When a slot frees up the scheduler picks a random enabled event from
+ *  those still on cooldown, waits a random gap, then activates it. This
+ *  prevents the "everything on at once" feeling and keeps each event's
+ *  effect distinct. */
+const EVENT_OFF_MIN_MS = 25_000;   // shortest gap between fires (after one ends)
+const EVENT_OFF_MAX_MS = 60_000;   // longest gap between fires
 const EVENT_ON_MIN_MS = 14_000;    // shortest active duration
 const EVENT_ON_MAX_MS = 26_000;    // longest active duration
 /** Initial delay so the first event doesn't fire the instant the match
  *  starts (gives players a chance to orient first). */
 const EVENT_INITIAL_GRACE_MS = 25_000;
 
-const ARENA_HALF = 300; // matches client builder (open-world map)
+const ARENA_HALF = 400; // matches client builder (open-world map)
 const SPAWN_RADIUS = 60; // cluster fresh spawns near the centre
 const RESPAWN_DELAY_MS = 3000;
 const MAX_FEED = 6;
@@ -46,17 +63,19 @@ export class ArenaRoom extends Room<ArenaState> {
 
   /** Which event channels are *eligible* to fire in this match. The host
    *  picks these at room creation and they don't change after that. The
-   *  *currently active* events live in `state.events` and are flipped by
-   *  the server's random scheduler. */
-  private enabledEvents = { night: false, lowGravity: false, meteorShower: false, fog: false };
-  /** Random scheduler state per event: when the next activation is due,
-   *  and when the currently active occurrence will end (0 = inactive). */
-  private eventSched: Record<EventKey, { nextFireAt: number; deactivateAt: number }> = {
-    night:        { nextFireAt: 0, deactivateAt: 0 },
-    lowGravity:   { nextFireAt: 0, deactivateAt: 0 },
-    meteorShower: { nextFireAt: 0, deactivateAt: 0 },
-    fog:          { nextFireAt: 0, deactivateAt: 0 },
+   *  *currently active* event lives in `state.events` and is flipped by
+   *  the server's sequential scheduler — at most one event is active at
+   *  any moment. */
+  private enabledEvents: Record<EventKey, boolean> = {
+    night: false, lowGravity: false, meteorShower: false, fog: false,
+    thunderstorm: false, sandstorm: false,
   };
+  /** Sequential scheduler state. `currentEvent` holds the key of the
+   *  active event (or null when nothing is firing). `nextFireAt` /
+   *  `deactivateAt` drive the on/off transitions. */
+  private currentEvent: EventKey | null = null;
+  private nextFireAt = 0;
+  private deactivateAt = 0;
 
   onCreate(opts?: JoinOpts) {
     this.setState(new ArenaState());
@@ -71,13 +90,13 @@ export class ArenaRoom extends Room<ArenaState> {
       this.enabledEvents.lowGravity   = !!opts.events.lowGravity;
       this.enabledEvents.meteorShower = !!opts.events.meteorShower;
       this.enabledEvents.fog          = !!opts.events.fog;
-      // Stagger the initial fire times so enabled events don't all trigger
-      // at the same instant. Each gets a random offset on top of the grace.
-      const now = Date.now();
-      for (const k of EVENT_KEYS) {
-        if (this.enabledEvents[k]) {
-          this.eventSched[k].nextFireAt = now + EVENT_INITIAL_GRACE_MS + Math.random() * 30_000;
-        }
+      this.enabledEvents.thunderstorm = !!opts.events.thunderstorm;
+      this.enabledEvents.sandstorm    = !!opts.events.sandstorm;
+      // Schedule the first event after a short grace period — only one
+      // event is ever active at a time, so we just need a single timer.
+      const anyEnabled = EVENT_KEYS.some(k => this.enabledEvents[k]);
+      if (anyEnabled) {
+        this.nextFireAt = Date.now() + EVENT_INITIAL_GRACE_MS + Math.random() * 20_000;
       }
     }
     if (opts?.bots?.enabled && (opts.bots.count ?? 0) > 0) {
@@ -181,22 +200,30 @@ export class ArenaRoom extends Room<ArenaState> {
       }
     });
 
-    // Match-event scheduler. Each enabled event independently flips on
-    // for a random duration, then off, then waits a random gap before its
-    // next activation. Disabled events stay off forever.
-    for (const key of EVENT_KEYS) {
-      if (!this.enabledEvents[key]) continue;
-      const t = this.eventSched[key];
-      // Time to deactivate?
-      if (t.deactivateAt > 0 && now >= t.deactivateAt) {
-        this.state.events[key] = false;
-        t.deactivateAt = 0;
-        t.nextFireAt = now + EVENT_OFF_MIN_MS + Math.random() * (EVENT_OFF_MAX_MS - EVENT_OFF_MIN_MS);
-      }
-      // Time to fire?
-      if (t.deactivateAt === 0 && t.nextFireAt > 0 && now >= t.nextFireAt) {
-        this.state.events[key] = true;
-        t.deactivateAt = now + EVENT_ON_MIN_MS + Math.random() * (EVENT_ON_MAX_MS - EVENT_ON_MIN_MS);
+    // Sequential match-event scheduler — at most one event is active at
+    // any time. When the active event ends we wait a random gap then
+    // pick the next event uniformly from the *enabled* set (excluding
+    // the one that just ended where possible, so the same event doesn't
+    // fire twice in a row).
+    if (this.currentEvent && now >= this.deactivateAt) {
+      this.state.events[this.currentEvent] = false;
+      const justEnded = this.currentEvent;
+      this.currentEvent = null;
+      this.deactivateAt = 0;
+      this.nextFireAt = now + EVENT_OFF_MIN_MS + Math.random() * (EVENT_OFF_MAX_MS - EVENT_OFF_MIN_MS);
+      // Suppress unused-variable lint without breaking the no-repeat
+      // logic below if we ever want to reinstate it; the pool already
+      // excludes the active key implicitly because we just cleared it.
+      void justEnded;
+    }
+    if (!this.currentEvent && this.nextFireAt > 0 && now >= this.nextFireAt) {
+      const pool = EVENT_KEYS.filter(k => this.enabledEvents[k]);
+      if (pool.length > 0) {
+        const pick = pool[Math.floor(Math.random() * pool.length)];
+        this.currentEvent = pick;
+        this.state.events[pick] = true;
+        this.deactivateAt = now + EVENT_ON_MIN_MS + Math.random() * (EVENT_ON_MAX_MS - EVENT_ON_MIN_MS);
+        this.nextFireAt = 0;
       }
     }
 

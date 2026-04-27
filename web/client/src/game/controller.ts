@@ -118,11 +118,26 @@ export class LocalController {
     const dy = this.velocityY * dt;
 
     // Move on each horizontal axis separately so the player slides along
-    // walls instead of sticking to them.
-    this.position.x += move.x;
-    this.resolveHorizontal();
-    this.position.z += move.z;
-    this.resolveHorizontal();
+    // walls instead of sticking to them. Reject any axis-step that would
+    // require climbing terrain steeper than ~45° relative to the current
+    // foot height — without this, the heightfield-driven cliff ring at
+    // the boundary acts as a ramp, letting players walk straight up the
+    // outer wall.
+    const MAX_STEP_RISE = 1.2; // metres of climb permitted per metre of horizontal motion
+    const groundNow = this.heightAt(this.position.x, this.position.z);
+    const tryX = this.position.x + move.x;
+    const groundAfterX = this.heightAt(tryX, this.position.z);
+    if (groundAfterX - groundNow < Math.abs(move.x) * MAX_STEP_RISE + 0.01) {
+      this.position.x = tryX;
+      this.resolveHorizontal();
+    }
+    const groundMid = this.heightAt(this.position.x, this.position.z);
+    const tryZ = this.position.z + move.z;
+    const groundAfterZ = this.heightAt(this.position.x, tryZ);
+    if (groundAfterZ - groundMid < Math.abs(move.z) * MAX_STEP_RISE + 0.01) {
+      this.position.z = tryZ;
+      this.resolveHorizontal();
+    }
 
     const oldFeet = this.position.y - 1.6;
     this.position.y += dy;

@@ -4,7 +4,14 @@ import { WEAPONS, getWeapon } from "../weapons";
 /** Wires the main-menu form to a profile and resolves the user's choices. */
 export interface MatchOptions {
   bots: { enabled: boolean; count: number; difficulty: "easy" | "normal" | "hard" };
-  events: { night: boolean; lowGravity: boolean; meteorShower: boolean; fog: boolean };
+  events: {
+    night: boolean;
+    lowGravity: boolean;
+    meteorShower: boolean;
+    fog: boolean;
+    thunderstorm: boolean;
+    sandstorm: boolean;
+  };
 }
 
 export interface MenuResult {
@@ -34,6 +41,8 @@ export function setupMenu(onPlay: (r: MenuResult) => void) {
   const evLowGrav = document.getElementById("ev-lowgrav") as HTMLInputElement;
   const evMeteor = document.getElementById("ev-meteor") as HTMLInputElement;
   const evFog = document.getElementById("ev-fog") as HTMLInputElement;
+  const evStorm = document.getElementById("ev-storm") as HTMLInputElement;
+  const evSand = document.getElementById("ev-sand") as HTMLInputElement;
 
   const profile = load();
   nameInput.value = profile.name;
@@ -53,6 +62,8 @@ export function setupMenu(onPlay: (r: MenuResult) => void) {
   evLowGrav.checked = saved.events.lowGravity;
   evMeteor.checked = saved.events.meteorShower;
   evFog.checked = saved.events.fog;
+  if (evStorm) evStorm.checked = saved.events.thunderstorm;
+  if (evSand) evSand.checked = saved.events.sandstorm;
 
   skinSelect.addEventListener("change", () => {
     if (!isSkinUnlocked(profile, skinSelect.value)) {
@@ -87,6 +98,8 @@ export function setupMenu(onPlay: (r: MenuResult) => void) {
         lowGravity: evLowGrav.checked,
         meteorShower: evMeteor.checked,
         fog: evFog.checked,
+        thunderstorm: evStorm?.checked ?? false,
+        sandstorm: evSand?.checked ?? false,
       },
     };
     saveMatchOptions(match);
@@ -173,7 +186,10 @@ const STORE_KEY = "arena.match.options.v1";
 function loadMatchOptions(): MatchOptions {
   const fallback: MatchOptions = {
     bots: { enabled: false, count: 3, difficulty: "normal" },
-    events: { night: false, lowGravity: false, meteorShower: false, fog: false },
+    events: {
+      night: false, lowGravity: false, meteorShower: false, fog: false,
+      thunderstorm: false, sandstorm: false,
+    },
   };
   try {
     const raw = localStorage.getItem(STORE_KEY);

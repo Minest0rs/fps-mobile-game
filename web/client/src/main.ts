@@ -63,7 +63,10 @@ refs.scene.add(localAvatar.group);
 // Match-events context (night, fog, meteor shower, low gravity). Initialised
 // after the scene is built so we can snapshot the original light intensities.
 const eventCtx = createEventCtx(refs.scene);
-const eventState: ClientMatchEvents = { night: false, lowGravity: false, meteorShower: false, fog: false };
+const eventState: ClientMatchEvents = {
+  night: false, lowGravity: false, meteorShower: false, fog: false,
+  thunderstorm: false, sandstorm: false,
+};
 
 let room: Room<ArenaStateLike> | null = null;
 const avatars = new Map<string, Avatar>();
@@ -225,6 +228,8 @@ function frame(now: number) {
     eventState.lowGravity = !!room.state.events.lowGravity;
     eventState.meteorShower = !!room.state.events.meteorShower;
     eventState.fog = !!room.state.events.fog;
+    eventState.thunderstorm = !!room.state.events.thunderstorm;
+    eventState.sandstorm = !!room.state.events.sandstorm;
   }
   applyMatchEvents(eventState, eventCtx, refs, controller, dt);
 

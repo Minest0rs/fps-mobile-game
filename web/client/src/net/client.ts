@@ -17,6 +17,8 @@ export interface MatchEvents {
   lowGravity: boolean;
   meteorShower: boolean;
   fog: boolean;
+  thunderstorm: boolean;
+  sandstorm: boolean;
 }
 
 export interface KillEntryState {

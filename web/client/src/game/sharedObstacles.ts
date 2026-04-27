@@ -98,6 +98,33 @@ export function generateObstacles(arenaHalf: number): SharedObstacle[] {
     }
     return false;
   };
+  /** Maximum vertical difference (metres) anywhere within a ±r metre
+   *  square around (x, z). Anything above ~0.6 m per metre footprint is
+   *  too steep for an axis-aligned obstacle to sit cleanly without
+   *  levitating on the downhill side. We sample interior points in
+   *  addition to corners because some hills crest *inside* the box. */
+  const slopeRange = (x: number, z: number, r: number) => {
+    let lo = Infinity, hi = -Infinity;
+    const samples = [
+      [-r, -r], [r, -r], [-r, r], [r, r],
+      [-r,  0], [r,  0], [ 0, -r], [0, r],
+      [ 0,  0],
+      [-r * 0.5, -r * 0.5], [r * 0.5, r * 0.5],
+      [-r * 0.5,  r * 0.5], [r * 0.5, -r * 0.5],
+    ];
+    for (const [ox, oz] of samples) {
+      const h = terrainHeight(x + ox, z + oz, arenaHalf);
+      if (h < lo) lo = h;
+      if (h > hi) hi = h;
+    }
+    return hi - lo;
+  };
+  /** True if the obstacle at (x, z) with footprint half-size r should
+   *  be skipped because the terrain underneath is too uneven. The limit
+   *  scales with footprint — a small rock can tolerate more relative
+   *  slope than a wide shack. */
+  const tooSteep = (x: number, z: number, r: number, maxRise: number) =>
+    slopeRange(x, z, r) > maxRise;
 
   // ---- Rocks (replaces the old crates / bunker walls) -----------------
   // A spread of medium-sized boulders across the arena. Rocks are short
@@ -113,6 +140,9 @@ export function generateObstacles(arenaHalf: number): SharedObstacle[] {
     if (inRiver(x, z)) continue;
     const r = 1.4 + rockRng() * 1.6;
     if (tooClose(x, z, r + 1.5)) continue;
+    // Rocks tolerate moderate slope: their lower half is buried in the
+    // ground anyway, so a 0.6 m rise across the footprint is fine.
+    if (tooSteep(x, z, r, 0.6 + r * 0.4)) continue;
     const h = r * 1.4 + rockRng() * 0.4;
     out.push({ x, z, w: r * 2, d: r * 2, h, type: "rock", variant: Math.floor(rockRng() * 8) });
   }
@@ -130,6 +160,10 @@ export function generateObstacles(arenaHalf: number): SharedObstacle[] {
     if (x * x + z * z < 64) continue;
     if (inRiver(x, z)) continue;
     if (tooClose(x, z, 3.5)) continue;
+    // Trees can sit on light slopes (the trunk is buried 0.4 m), but skip
+    // anything where the ground tilts more than 1 m across the tiny
+    // 0.5 m footprint — those look obviously wrong.
+    if (tooSteep(x, z, 0.6, 1.0)) continue;
     const h = 6 + treeRng() * 4;
     // Trunk is narrow but the canopy is wider — for LOS we use the trunk
     // (so you can see/shoot under the canopy), which is realistic.
@@ -151,6 +185,10 @@ export function generateObstacles(arenaHalf: number): SharedObstacle[] {
     if (tooClose(x, z, 12)) continue;
     const w = 5 + shackRng() * 2;
     const d = 4 + shackRng() * 2;
+    // Shacks are big and boxy — even a small slope makes their floor seam
+    // visible from one side. Reject anywhere with more than 0.7 m of rise
+    // across the larger footprint half-extent.
+    if (tooSteep(x, z, Math.max(w, d) / 2, 0.7)) continue;
     out.push({ x, z, w, d, h: 3.5, type: "shack", variant: Math.floor(shackRng() * 4) });
   }
 
@@ -168,6 +206,8 @@ export function generateObstacles(arenaHalf: number): SharedObstacle[] {
       if (Math.abs(ox) < sh.w / 2 + 0.5 && Math.abs(oz) < sh.d / 2 + 0.5) continue; // not inside the shack
       if (tooClose(cx, cz, 1.6)) continue;
       const s = 1.2 + crateRng() * 0.6;
+      // Crates are small but their corners catch the eye — skip steep ground.
+      if (tooSteep(cx, cz, s / 2, 0.5)) continue;
       out.push({ x: cx, z: cz, w: s, d: s, h: s, type: "crate", variant: Math.floor(crateRng() * 4) });
     }
   }
