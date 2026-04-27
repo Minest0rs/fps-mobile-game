@@ -5,6 +5,7 @@ export interface InputState {
   move: { x: number; y: number };
   lookDelta: { x: number; y: number };
   fireHeld: boolean;
+  aimHeld: boolean;
   jumpRequested: boolean;
   toggleScoreboard: boolean;
 }
@@ -14,6 +15,7 @@ export class InputManager {
     move: { x: 0, y: 0 },
     lookDelta: { x: 0, y: 0 },
     fireHeld: false,
+    aimHeld: false,
     jumpRequested: false,
     toggleScoreboard: false,
   };
@@ -45,6 +47,7 @@ export class InputManager {
       joystickHandle: HTMLElement;
       lookArea: HTMLElement;
       fireButton: HTMLElement;
+      aimButton: HTMLElement;
       jumpButton: HTMLElement;
       scoreboardButton: HTMLElement;
     },
@@ -62,6 +65,7 @@ export class InputManager {
       move: { ...move },
       lookDelta: { ...this.state.lookDelta },
       fireHeld: this.state.fireHeld,
+      aimHeld: this.state.aimHeld,
       jumpRequested: this.state.jumpRequested,
       toggleScoreboard: this.state.toggleScoreboard,
     };
@@ -93,10 +97,14 @@ export class InputManager {
     });
     this.canvas.addEventListener("mousedown", (e) => {
       if (e.button === 0) this.state.fireHeld = true;
+      if (e.button === 2) { e.preventDefault(); this.state.aimHeld = true; }
     });
     addEventListener("mouseup", (e) => {
       if (e.button === 0) this.state.fireHeld = false;
+      if (e.button === 2) this.state.aimHeld = false;
     });
+    // Right-click context menu would otherwise interrupt aim-down-sights.
+    this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     addEventListener("mousemove", (e) => {
       if (!this.pointerLocked) return;
       this.state.lookDelta.x += e.movementX * this.mouseSens;
@@ -105,7 +113,7 @@ export class InputManager {
   }
 
   private bindTouch() {
-    const { joystickBase, joystickHandle, lookArea, fireButton, jumpButton, scoreboardButton } = this.ui;
+    const { joystickBase, joystickHandle, lookArea, fireButton, aimButton, jumpButton, scoreboardButton } = this.ui;
     const radius = 60;
 
     joystickBase.addEventListener("pointerdown", (e) => {
@@ -152,6 +160,9 @@ export class InputManager {
     fireButton.addEventListener("pointerdown", () => { this.state.fireHeld = true; });
     fireButton.addEventListener("pointerup",   () => { this.state.fireHeld = false; });
     fireButton.addEventListener("pointercancel",() => { this.state.fireHeld = false; });
+    aimButton.addEventListener("pointerdown",  () => { this.state.aimHeld = true; });
+    aimButton.addEventListener("pointerup",    () => { this.state.aimHeld = false; });
+    aimButton.addEventListener("pointercancel",() => { this.state.aimHeld = false; });
     jumpButton.addEventListener("pointerdown", () => { this.state.jumpRequested = true; });
     scoreboardButton.addEventListener("pointerdown", () => { this.state.toggleScoreboard = true; });
   }

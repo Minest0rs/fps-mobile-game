@@ -124,7 +124,12 @@ button:active { transform: scale(0.98); }
 }
 .touch-button.small { width: 60px; height: 60px; font-size: 11px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); }
 #fire-button { right: 28px; bottom: 90px; }
-#jump-button { right: 130px; bottom: 110px; background: rgba(120,180,255,0.25); border-color: rgba(120,180,255,0.6); }
+#aim-button {
+  right: 130px; bottom: 28px;
+  background: rgba(255,210,90,0.22); border-color: rgba(255,210,90,0.7);
+  width: 78px; height: 78px; font-size: 14px;
+}
+#jump-button { right: 130px; bottom: 130px; background: rgba(120,180,255,0.25); border-color: rgba(120,180,255,0.6); }
 #scoreboard-button { right: 28px; top: 28px; }
 
 @media (pointer: coarse), (max-width: 800px) {

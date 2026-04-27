@@ -10,6 +10,7 @@ export class Avatar {
   private body: THREE.Mesh;
   private head: THREE.Mesh;
   private gun: THREE.Mesh;
+  private laser!: THREE.Line;
   private nameTag: THREE.Sprite;
 
   constructor(name: string, skinId: string) {
@@ -30,10 +31,22 @@ export class Avatar {
     this.group.add(this.head);
 
     const gunMat = new THREE.MeshStandardMaterial({ color: 0x222a38, roughness: 0.6, metalness: 0.6 });
-    this.gun = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.7), gunMat);
-    this.gun.position.set(0.35, 1.45, 0.35);
+    // The avatar's local forward is -Z (default Three.js group orientation),
+    // so the gun must be at negative Z to sit in front of the body.
+    this.gun = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.85), gunMat);
+    this.gun.position.set(0.35, 1.45, -0.55);
     this.gun.castShadow = true;
     this.group.add(this.gun);
+
+    // Laser sight: a thin red line projected forward from the gun barrel so
+    // the player can see exactly where the shot will go from third-person.
+    const laserMat = new THREE.LineBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0.85 });
+    const laserGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, -0.45),
+      new THREE.Vector3(0, 0, -60),
+    ]);
+    this.laser = new THREE.Line(laserGeom, laserMat);
+    this.gun.add(this.laser);
 
     this.nameTag = makeNameSprite(name);
     this.nameTag.position.set(0, 2.25, 0);
@@ -57,7 +70,14 @@ export class Avatar {
   setPose(x: number, y: number, z: number, yaw: number, pitch: number) {
     this.group.position.set(x, y - 1.6, z); // body's feet
     this.group.rotation.y = yaw;
-    this.gun.rotation.x = -pitch;
+    // After applying group Y-rotation, a positive X-rotation tilts the gun's
+    // local -Z forward toward +Y (i.e. up), which matches how `pitch > 0`
+    // means "looking up" everywhere else in the controller.
+    this.gun.rotation.x = pitch;
+  }
+
+  setLaserVisible(v: boolean) {
+    this.laser.visible = v;
   }
 
   setVisible(v: boolean) {

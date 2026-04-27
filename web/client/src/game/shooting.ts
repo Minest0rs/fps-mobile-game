@@ -25,9 +25,9 @@ export function aim(
   // Scale hit radius with distance: at point-blank we keep it tight (~head/
   // shoulder size), but at long range we widen the volume so a small angular
   // error still connects.
-  const NEAR_R = 0.55;
-  const FAR_R  = 1.15;
-  const FAR_DIST = 30;
+  const NEAR_R = 0.7;
+  const FAR_R  = 2.0;
+  const FAR_DIST = 25;
 
   let bestT = range;
   let bestId: string | undefined;

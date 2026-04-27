@@ -5,7 +5,7 @@ interface MoveMsg { x: number; y: number; z: number; yaw: number; pitch: number;
 interface ShootMsg { targetId?: string; }
 interface JoinOpts { name?: string; skin?: string; }
 
-const ARENA_HALF = 19; // matches client builder
+const ARENA_HALF = 40; // matches client builder
 const RESPAWN_DELAY_MS = 3000;
 const SHOT_COOLDOWN_MS = 110; // ~9 shots/s
 const SHOT_DAMAGE = 22;
@@ -23,7 +23,7 @@ export class ArenaRoom extends Room<ArenaState> {
       // Clamp into arena bounds — server is authoritative on position.
       p.x = clamp(msg.x, -ARENA_HALF, ARENA_HALF);
       p.z = clamp(msg.z, -ARENA_HALF, ARENA_HALF);
-      p.y = clamp(msg.y, 0, 4);
+      p.y = clamp(msg.y, 0, 8);
       p.yaw = msg.yaw;
       p.pitch = clamp(msg.pitch, -1.4, 1.4);
     });
@@ -98,7 +98,7 @@ export class ArenaRoom extends Room<ArenaState> {
     // Pick a point at least PILLAR_RADIUS away from origin so we never
     // spawn inside the central pillar (which is otherwise just a black void
     // for the new player and a frustrating first impression).
-    const PILLAR_RADIUS = 2.5;
+    const PILLAR_RADIUS = 3.0;
     const r = ARENA_HALF * 0.6;
     for (let i = 0; i < 20; i++) {
       const x = (Math.random() * 2 - 1) * r;

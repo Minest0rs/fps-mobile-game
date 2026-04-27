@@ -18,6 +18,7 @@ const input = new InputManager(refs.renderer.domElement, {
   joystickHandle: document.getElementById("joystick-handle")!,
   lookArea: document.getElementById("look-area")!,
   fireButton: document.getElementById("fire-button")!,
+  aimButton: document.getElementById("aim-button")!,
   jumpButton: document.getElementById("jump-button")!,
   scoreboardButton: document.getElementById("scoreboard-button")!,
 });
@@ -36,7 +37,14 @@ const controller = new LocalController(refs.camera, refs.arenaHalf, refs.obstacl
 // Kept out of `avatars` so it isn't tested as a hit target.
 const localAvatar = new Avatar("You", load().skin);
 localAvatar.setVisible(true);
+// The laser sight only shows while aiming so it isn't visual clutter every
+// frame.
+localAvatar.setLaserVisible(false);
 refs.scene.add(localAvatar.group);
+
+// FOV transition for aim-down-sights (zoom). The base FOV is recomputed by
+// scene.fit() on resize; we lerp between that and a narrower FOV when aiming.
+let fovBlend = 0; // 0 = hipfire, 1 = ADS
 
 let room: Room<ArenaStateLike> | null = null;
 const avatars = new Map<string, Avatar>();
@@ -143,6 +151,15 @@ function frame(now: number) {
   );
 
   if (i.toggleScoreboard) hud.toggleScoreboard();
+
+  // Aim-down-sights: smooth FOV blend, show laser sight on the local avatar.
+  const target = i.aimHeld && alive ? 1 : 0;
+  fovBlend += (target - fovBlend) * Math.min(1, dt * 12);
+  const baseFov = refs.getBaseFov();
+  const adsFov = baseFov * 0.55;
+  refs.camera.fov = baseFov + (adsFov - baseFov) * fovBlend;
+  refs.camera.updateProjectionMatrix();
+  localAvatar.setLaserVisible(fovBlend > 0.05 && alive);
 
   // Shooting (no firing while dead)
   if (alive && i.fireHeld && !reloading && magazine > 0 && performance.now() - lastShotAt > shotIntervalMs) {

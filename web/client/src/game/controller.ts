@@ -106,14 +106,13 @@ export class LocalController {
   getMuzzlePosition(): THREE.Vector3 {
     const sy = Math.sin(this.yaw);
     const cy = Math.cos(this.yaw);
-    // Avatar local gun position is (0.35, 1.45, 0.35); we offset 1.4m forward
-    // from the gun so the muzzle is well clear of the body capsule.
+    // Local muzzle: in front of the right shoulder of the avatar
+    // (gun model is at (0.35, 1.45, -0.55) with length 0.85, so the barrel
+    // tip sits at z ≈ -0.98; round to -1.05 for headroom).
     const lx = 0.35;
-    const lz = 0.35 - 1.4;
+    const lz = -1.05;
     const wx = this.position.x + lx * cy + lz * sy;
     const wz = this.position.z - lx * sy + lz * cy;
-    // position.y is the camera/head reference height (~1.6); shoulder height
-    // is a bit below it.
     return new THREE.Vector3(wx, this.position.y - 0.2, wz);
   }
 
