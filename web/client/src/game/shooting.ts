@@ -6,8 +6,13 @@ export interface AimResult {
   point: THREE.Vector3;
 }
 
-/** Given the camera and all remote avatars, raycast and return the first remote
- *  player hit (if any) along with the impact point. */
+/** Given the camera and all remote avatars, return the closest player hit
+ *  (with generous aim assist) and the impact point along the shot.
+ *
+ *  We test a fat sphere around each avatar rather than the visible meshes so
+ *  long-range shots that *look* on-target actually register. The sphere is
+ *  much larger than the visible body — about player width — so the user
+ *  doesn't have to be pixel-perfect at 30+ metres. */
 export function aim(
   camera: THREE.PerspectiveCamera,
   avatars: Map<string, Avatar>,
@@ -17,22 +22,41 @@ export function aim(
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
 
-  const ray = new THREE.Raycaster(origin, dir, 0.1, range);
-  const hitMeshes: { mesh: THREE.Object3D; id: string }[] = [];
+  // Scale hit radius with distance: at point-blank we keep it tight (~head/
+  // shoulder size), but at long range we widen the volume so a small angular
+  // error still connects.
+  const NEAR_R = 0.55;
+  const FAR_R  = 1.15;
+  const FAR_DIST = 30;
+
+  let bestT = range;
+  let bestId: string | undefined;
+  const oc = new THREE.Vector3();
   avatars.forEach((avatar, id) => {
     if (!avatar.group.visible) return;
-    avatar.group.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) hitMeshes.push({ mesh: child, id });
-    });
+    // Capsule body centre is about (group.x, group.y + 1.0, group.z).
+    const cx = avatar.group.position.x;
+    const cy = avatar.group.position.y + 1.0;
+    const cz = avatar.group.position.z;
+    oc.set(origin.x - cx, origin.y - cy, origin.z - cz);
+    const b = oc.dot(dir);
+    if (b > 0) return; // target is behind the camera
+    // Distance from the avatar centre to the closest point on the ray:
+    const closest = oc.lengthSq() - b * b;
+    const distAlong = -b;
+    const t = Math.min(1, distAlong / FAR_DIST);
+    const r = NEAR_R + (FAR_R - NEAR_R) * t;
+    if (closest > r * r) return;
+    // Solve for the entry point on the sphere (closer of the two roots).
+    const half = Math.sqrt(r * r - closest);
+    const enter = distAlong - half;
+    if (enter < 0.1 || enter > bestT) return;
+    bestT = enter;
+    bestId = id;
   });
 
-  const intersects = ray.intersectObjects(hitMeshes.map((h) => h.mesh), false);
-  if (intersects.length === 0) {
-    return { point: origin.clone().addScaledVector(dir, range) };
-  }
-  const first = intersects[0];
-  const id = hitMeshes.find((h) => h.mesh === first.object)?.id;
-  return { targetId: id, point: first.point };
+  const point = origin.clone().addScaledVector(dir, bestT);
+  return bestId ? { targetId: bestId, point } : { point };
 }
 
 /** Spawn a transient glowing tracer from `from` toward `to`.

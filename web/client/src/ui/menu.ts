@@ -34,6 +34,9 @@ export function setupMenu(onPlay: (r: MenuResult) => void) {
     const name = (nameInput.value || "Player").slice(0, 20);
     profile.name = name;
     save(profile);
+    // Fullscreen / orientation lock MUST be requested directly from this
+    // user-gesture stack, before any awaits, or mobile browsers reject it.
+    if (isTouchDevice()) requestFullscreenAndLandscape();
     onPlay({ name, skin: profile.skin });
   });
 
@@ -48,6 +51,26 @@ export function setupMenu(onPlay: (r: MenuResult) => void) {
       skinSelect.value = p.skin;
     },
   };
+}
+
+function isTouchDevice(): boolean {
+  return matchMedia("(pointer: coarse)").matches || "ontouchstart" in window;
+}
+
+function requestFullscreenAndLandscape() {
+  const root = document.documentElement;
+  const fs = root.requestFullscreen?.bind(root)
+    ?? (root as any).webkitRequestFullscreen?.bind(root);
+  if (fs) {
+    Promise.resolve(fs({ navigationUI: "hide" }))
+      .then(() => {
+        const orient = (screen as any).orientation;
+        if (orient && typeof orient.lock === "function") {
+          return orient.lock("landscape").catch(() => {});
+        }
+      })
+      .catch((e) => console.warn("fullscreen failed:", e));
+  }
 }
 
 function rebuildSkinOptions(select: HTMLSelectElement, profile: Profile) {

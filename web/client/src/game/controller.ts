@@ -17,7 +17,9 @@ export class LocalController {
   // Starting position is offset from origin so that, even before the server
   // delivers a real spawn point, the camera isn't inside the center pillar.
   readonly position = new THREE.Vector3(8, 1.6, 8);
-  yaw = 0;
+  // Initial yaw faces toward the arena origin (so the spawn view is the centre
+  // pillar rather than an empty wall).
+  yaw = Math.PI / 4;
   pitch = 0;
   private velocityY = 0;
   private grounded = true;
@@ -32,6 +34,14 @@ export class LocalController {
     this.position.set(x, y, z);
     this.velocityY = 0;
     this.grounded = true;
+    // Face the arena centre so the player sees the action immediately after
+    // spawn rather than staring at the wall they happened to be next to.
+    const dx = -x;
+    const dz = -z;
+    if (dx * dx + dz * dz > 0.01) {
+      this.yaw = Math.atan2(-dx, -dz);
+      this.pitch = 0;
+    }
   }
 
   /** Runs every frame. Returns true if any state worth syncing changed. */
