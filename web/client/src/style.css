@@ -98,20 +98,30 @@ button:active { transform: scale(0.98); }
 #touch-controls { position: absolute; inset: 0; pointer-events: none; }
 .touch-only { display: none; }
 
-#joystick-base {
-  position: absolute; left: 24px; bottom: 80px;
-  width: 120px; height: 120px; border-radius: 60px;
-  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+/* Dynamic joystick: the zone covers the full left half of the screen and
+   accepts the first touch; the visible base+handle then jump to that touch
+   point. The base is hidden until activated. */
+#joystick-zone {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 50%;
   pointer-events: auto; touch-action: none;
 }
+#joystick-base {
+  position: absolute; left: 0; top: 0;
+  width: 140px; height: 140px; border-radius: 70px;
+  margin-left: -70px; margin-top: -70px;
+  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.18);
+  pointer-events: none;
+  opacity: 0; transition: opacity 80ms ease-out;
+}
+#joystick-base.active { opacity: 1; }
 #joystick-handle {
-  position: absolute; left: 50%; top: 50%; width: 56px; height: 56px;
-  margin-left: -28px; margin-top: -28px;
-  background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 28px;
+  position: absolute; left: 50%; top: 50%; width: 60px; height: 60px;
+  margin-left: -30px; margin-top: -30px;
+  background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 30px;
 }
 #look-area {
-  position: absolute; right: 0; top: 0; bottom: 160px; width: 60%;
+  position: absolute; right: 0; top: 0; bottom: 0; width: 50%;
   pointer-events: auto; touch-action: none;
 }
 .touch-button {
@@ -124,6 +134,9 @@ button:active { transform: scale(0.98); }
 }
 .touch-button.small { width: 60px; height: 60px; font-size: 11px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); }
 #fire-button { right: 28px; bottom: 90px; }
+/* Secondary fire on the left side, above the joystick anchor zone, so the
+   left thumb can shoot while the right thumb adjusts aim. */
+#fire-button-left { left: 28px; bottom: 220px; width: 78px; height: 78px; font-size: 13px; }
 #aim-button {
   right: 130px; bottom: 28px;
   background: rgba(255,210,90,0.22); border-color: rgba(255,210,90,0.7);

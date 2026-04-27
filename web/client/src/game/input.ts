@@ -45,8 +45,10 @@ export class InputManager {
     private ui: {
       joystickBase: HTMLElement;
       joystickHandle: HTMLElement;
+      joystickZone: HTMLElement;
       lookArea: HTMLElement;
       fireButton: HTMLElement;
+      fireButtonLeft: HTMLElement;
       aimButton: HTMLElement;
       jumpButton: HTMLElement;
       scoreboardButton: HTMLElement;
@@ -113,18 +115,26 @@ export class InputManager {
   }
 
   private bindTouch() {
-    const { joystickBase, joystickHandle, lookArea, fireButton, aimButton, jumpButton, scoreboardButton } = this.ui;
-    const radius = 60;
+    const { joystickBase, joystickHandle, joystickZone, lookArea,
+            fireButton, fireButtonLeft, aimButton, jumpButton, scoreboardButton } = this.ui;
+    const radius = 70;
 
-    joystickBase.addEventListener("pointerdown", (e) => {
+    // Dynamic joystick: the joystick base/handle teleport to wherever the
+    // first touch lands inside joystickZone (the left half of the screen).
+    // This matches modern shooters where the joystick anchors to your thumb
+    // rather than to a fixed screen position.
+    joystickZone.addEventListener("pointerdown", (e) => {
+      if (this.joystickActive) return;
       this.joystickActive = true;
       this.joystickPointer = e.pointerId;
-      const rect = joystickBase.getBoundingClientRect();
-      this.joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-      joystickBase.setPointerCapture(e.pointerId);
+      this.joystickCenter = { x: e.clientX, y: e.clientY };
+      joystickBase.style.left = `${e.clientX}px`;
+      joystickBase.style.top  = `${e.clientY}px`;
+      joystickBase.classList.add("active");
+      joystickZone.setPointerCapture(e.pointerId);
       this.updateJoystick(e.clientX, e.clientY, radius, joystickHandle);
     });
-    joystickBase.addEventListener("pointermove", (e) => {
+    joystickZone.addEventListener("pointermove", (e) => {
       if (!this.joystickActive || e.pointerId !== this.joystickPointer) return;
       this.updateJoystick(e.clientX, e.clientY, radius, joystickHandle);
     });
@@ -134,9 +144,10 @@ export class InputManager {
       this.joystickPointer = -1;
       this.joystickValue = { x: 0, y: 0 };
       joystickHandle.style.transform = "translate(-50%, -50%)";
+      joystickBase.classList.remove("active");
     };
-    joystickBase.addEventListener("pointerup", endJoystick);
-    joystickBase.addEventListener("pointercancel", endJoystick);
+    joystickZone.addEventListener("pointerup", endJoystick);
+    joystickZone.addEventListener("pointercancel", endJoystick);
 
     lookArea.addEventListener("pointerdown", (e) => {
       this.lookPointer = e.pointerId;
@@ -157,9 +168,24 @@ export class InputManager {
     lookArea.addEventListener("pointerup", endLook);
     lookArea.addEventListener("pointercancel", endLook);
 
-    fireButton.addEventListener("pointerdown", () => { this.state.fireHeld = true; });
-    fireButton.addEventListener("pointerup",   () => { this.state.fireHeld = false; });
-    fireButton.addEventListener("pointercancel",() => { this.state.fireHeld = false; });
+    // Two fire buttons (one per thumb). Each tracks its own pointer so
+    // releasing one doesn't cancel a fire-hold on the other.
+    const fireDownIds = new Set<number>();
+    const bindFire = (btn: HTMLElement) => {
+      btn.addEventListener("pointerdown", (e) => {
+        fireDownIds.add(e.pointerId);
+        this.state.fireHeld = true;
+      });
+      const release = (e: PointerEvent) => {
+        fireDownIds.delete(e.pointerId);
+        if (fireDownIds.size === 0) this.state.fireHeld = false;
+      };
+      btn.addEventListener("pointerup", release);
+      btn.addEventListener("pointercancel", release);
+    };
+    bindFire(fireButton);
+    bindFire(fireButtonLeft);
+
     aimButton.addEventListener("pointerdown",  () => { this.state.aimHeld = true; });
     aimButton.addEventListener("pointerup",    () => { this.state.aimHeld = false; });
     aimButton.addEventListener("pointercancel",() => { this.state.aimHeld = false; });

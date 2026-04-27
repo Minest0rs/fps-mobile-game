@@ -17,30 +17,57 @@ export interface SceneRefs {
   heightAt: (x: number, z: number) => number;
   /** The non-zoomed FOV the camera was last fit to (responsive to viewport). */
   getBaseFov: () => number;
+  /** Re-position the sun so its shadow camera tracks the active player. */
+  followSun: (playerX: number, playerZ: number) => void;
 }
 
 /** Smoothly varying ground height. Kept identical between the visual ground
- *  geometry and the controller so the player never falls through the floor. */
+ *  geometry and the controller so the player never falls through the floor.
+ *
+ *  Layout for the open-world map:
+ *    - Flat-ish spawn meadow near the centre.
+ *    - A river depression carved along z = 0 (a shallow trough about 30 m wide).
+ *    - A mountain peak in the (-x, +z) quadrant, rising to ~55 m.
+ *    - Rolling hills everywhere else.
+ *    - A massive cliff ring near the boundary (no straight walls); it climbs
+ *      to ~80 m so players can't walk out of the playable area. */
 export function terrainHeight(x: number, z: number, half: number): number {
-  const edge = Math.max(Math.abs(x), Math.abs(z));
-  // Small flat zone right at the centre so the spawn pillar sits on level
-  // ground; otherwise the world has gentle rolling hills.
-  if (edge < 4) return 0;
-  const playable = edge < half - 2;
-  // Blend in the playable hills smoothly with edge weight to keep the centre
-  // mostly flat near the spawn area.
-  const playW = playable
-    ? Math.min(1, (edge - 4) / 8)
-    : 1;
+  // Distance from centre and from the boundary (radial, not axis-aligned).
+  const r = Math.hypot(x, z);
+
+  // 1. Cliff ring — natural barrier replacing the old straight walls.
+  //    Activates only in the outer 60 m. The ramp is quadratic so it's
+  //    gentle at first then becomes a near-vertical wall.
+  if (r > half - 60) {
+    const t = Math.min(1, (r - (half - 60)) / 60);
+    const cliff = 4 + t * t * 80;
+    return cliff;
+  }
+
+  // 2. Mountain peak.
+  const mx = -half * 0.45, mz = half * 0.45;
+  const md = Math.hypot(x - mx, z - mz);
+  // Wide gaussian for a smooth, walkable mountain.
+  const mountain = Math.exp(-(md * md) / (90 * 90)) * 55;
+
+  // 3. River — a shallow trough centred at z = 0, gradually carved.
+  //    Skip the river inside the spawn flat to keep the spawn area solid.
+  const riverWidth = 18;
+  const riverFactor = Math.exp(-(z * z) / (riverWidth * riverWidth));
+  const river = -3.5 * riverFactor;
+
+  // 4. Rolling hills (always-on background).
   const hills =
-    Math.sin(x * 0.10) * 0.55 +
-    Math.cos(z * 0.13) * 0.45 +
-    Math.sin((x + z) * 0.07) * 0.35 +
-    Math.cos((x - z) * 0.09) * 0.30;
-  // Outside the arena walls let the terrain swell up more dramatically so
-  // the horizon reads as a hilly landscape.
-  const outerBoost = playable ? 0 : Math.min(2.5, (edge - half) * 0.08);
-  return hills * playW + outerBoost;
+    Math.sin(x * 0.035) * 1.4 +
+    Math.cos(z * 0.045) * 1.1 +
+    Math.sin((x + z) * 0.025) * 0.9 +
+    Math.cos((x - z) * 0.030) * 0.7;
+
+  // 5. Spawn flat — keep a 25 m radius near the centre nearly level so
+  //    starting the match isn't on a slope. Blend smoothly out.
+  const spawnInfluence = Math.exp(-(r * r) / (22 * 22));
+  const baseTerrain = mountain + river + hills;
+  return baseTerrain * (1 - spawnInfluence);
 }
 
 /** Build the renderer, camera, lights, sky, ground, walls, and crates. */
@@ -48,7 +75,7 @@ export function createScene(host: HTMLElement): SceneRefs {
   const scene = new THREE.Scene();
   // Warm, hazy daytime air. The fog colour matches the sky's horizon band so
   // distant geometry blends into the skybox instead of cutting off sharply.
-  scene.fog = new THREE.Fog(0xc4d4e6, 100, 320);
+  scene.fog = new THREE.Fog(0xc4d4e6, 200, 700);
   const sunDir = buildSky(scene);
 
   // Vertical FOV is recomputed each resize to keep the horizontal FOV roughly
@@ -85,9 +112,11 @@ export function createScene(host: HTMLElement): SceneRefs {
   const sun = new THREE.DirectionalLight(0xfff1d6, 1.5);
   sun.position.copy(sunDir).multiplyScalar(40);
   sun.castShadow = true;
-  sun.shadow.camera.left = -75; sun.shadow.camera.right = 75;
-  sun.shadow.camera.top = 75; sun.shadow.camera.bottom = -75;
-  sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 200;
+  // Shadows around the player; the directional sun follows player position
+  // so the shadow camera stays focused on the active area.
+  sun.shadow.camera.left = -90; sun.shadow.camera.right = 90;
+  sun.shadow.camera.top = 90; sun.shadow.camera.bottom = -90;
+  sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 250;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.bias = -0.0005;
   scene.add(sun);
@@ -113,7 +142,7 @@ export function createScene(host: HTMLElement): SceneRefs {
     scene.add(pl);
   }
 
-  const arenaHalf = 60;
+  const arenaHalf = 300;
   const obstacles = buildArena(scene, arenaHalf);
   const heightAt = (x: number, z: number) => terrainHeight(x, z, arenaHalf);
 
@@ -139,7 +168,12 @@ export function createScene(host: HTMLElement): SceneRefs {
   new ResizeObserver(fit).observe(host);
   fit();
 
-  return { scene, camera, renderer, arenaHalf, obstacles, heightAt, getBaseFov: () => baseFov };
+  const followSun = (px: number, pz: number) => {
+    sun.target.position.set(px, 0, pz);
+    sun.position.copy(sunDir).multiplyScalar(80).add(sun.target.position);
+  };
+
+  return { scene, camera, renderer, arenaHalf, obstacles, heightAt, getBaseFov: () => baseFov, followSun };
 }
 
 function buildArena(scene: THREE.Scene, half: number): Obstacles {
@@ -148,22 +182,43 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   // Ground — vertex-coloured grass with real height variation. The same
   // terrainHeight() function is queried by the controller, so the player
   // can never fall through visible terrain.
-  const SEG = 96;
+  // SEG sets sampling density; we want ~5 m per quad on the inner ground.
+  const SEG = Math.min(240, Math.max(96, Math.round(half / 2.5)));
   const groundGeom = new THREE.PlaneGeometry(half * 2, half * 2, SEG, SEG);
   const colours = new Float32Array(groundGeom.attributes.position.count * 3);
   const pos = groundGeom.attributes.position;
   const cRng = mulberry32(2024);
   for (let i = 0; i < pos.count; i++) {
-    const wx = pos.getX(i), wy = pos.getY(i); // before -X/2 rotation, Y maps to world Z
-    const h = terrainHeight(wx, wy, half);
+    // Plane is rotated -PI/2 around X; that maps local +Y to world -Z, so we
+    // must negate Y when sampling terrainHeight() (which uses world space)
+    // — otherwise the visible ground is mirrored relative to where every
+    // crate / collision check thinks it is.
+    const wx = pos.getX(i), wy = pos.getY(i);
+    const h = terrainHeight(wx, -wy, half);
     pos.setZ(i, h);
-    // Slightly tint higher ground brown / lower ground darker green.
+    // Tint by elevation: river bed sandy/blue, lowlands green, mid hills
+    // a richer green, mountain peaks rocky grey-brown.
     const t = cRng();
-    const base = 0.45 + t * 0.18;          // green base
-    const dirt = THREE.MathUtils.clamp(h * 0.18, 0, 0.35);
-    colours[i * 3 + 0] = (0.28 + t * 0.22) + dirt * 0.6;
-    colours[i * 3 + 1] = base + 0.05;
-    colours[i * 3 + 2] = (0.20 + t * 0.10) + dirt * 0.2;
+    let r: number, g: number, b: number;
+    if (h < -1.5) {
+      // River bank — wet sand tone.
+      r = 0.55 + t * 0.10; g = 0.50 + t * 0.08; b = 0.40 + t * 0.08;
+    } else if (h > 25) {
+      // Mountain rock — climbs from grey-green to white as you go up.
+      const rockT = THREE.MathUtils.clamp((h - 25) / 30, 0, 1);
+      r = 0.42 + rockT * 0.40 + t * 0.06;
+      g = 0.42 + rockT * 0.38 + t * 0.06;
+      b = 0.40 + rockT * 0.40 + t * 0.06;
+    } else {
+      // Default grass — mix of greens with a touch of dirt at higher ground.
+      const dirt = THREE.MathUtils.clamp(h * 0.05, 0, 0.30);
+      r = 0.28 + t * 0.18 + dirt * 0.5;
+      g = 0.48 + t * 0.16;
+      b = 0.20 + t * 0.10 + dirt * 0.15;
+    }
+    colours[i * 3 + 0] = r;
+    colours[i * 3 + 1] = g;
+    colours[i * 3 + 2] = b;
   }
   groundGeom.setAttribute("color", new THREE.BufferAttribute(colours, 3));
   pos.needsUpdate = true;
@@ -176,24 +231,33 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Outer "landscape" — a much larger ground plane behind the play-area
-  // walls so the horizon doesn't end at the arena bounds. Also displaced.
-  const outerSeg = 80;
-  const outerGeom = new THREE.PlaneGeometry(half * 8, half * 8, outerSeg, outerSeg);
-  const opos = outerGeom.attributes.position;
-  for (let i = 0; i < opos.count; i++) {
-    const wx = opos.getX(i), wy = opos.getY(i);
-    opos.setZ(i, terrainHeight(wx, wy, half) - 0.05);
-  }
-  opos.needsUpdate = true;
-  outerGeom.computeVertexNormals();
+  // Outer "landscape" — a much larger ground plane beyond the cliff ring so
+  // the horizon doesn't end at the arena bounds. Constant low height (just
+  // beyond the cliff) so it doesn't fight with the inner ground at the seam.
+  const outerSeg = 96;
+  const outerGeom = new THREE.PlaneGeometry(half * 6, half * 6, outerSeg, outerSeg);
   const outer = new THREE.Mesh(
     outerGeom,
     new THREE.MeshStandardMaterial({ color: 0x3d5a2c, roughness: 0.98 }),
   );
   outer.rotation.x = -Math.PI / 2;
+  outer.position.y = -0.5;
   outer.receiveShadow = true;
   scene.add(outer);
+
+  // River water — a long blue translucent ribbon along z = 0 sitting just
+  // below the river-bed depression in the terrain.
+  const water = new THREE.Mesh(
+    new THREE.PlaneGeometry(half * 1.7, 28),
+    new THREE.MeshStandardMaterial({
+      color: 0x2f7fc4, roughness: 0.25, metalness: 0.4,
+      transparent: true, opacity: 0.78,
+    }),
+  );
+  water.rotation.x = -Math.PI / 2;
+  water.position.set(0, -2.6, 0);
+  water.receiveShadow = true;
+  scene.add(water);
 
   // Distant decorative hills — green forested mounds beyond the play area.
   const hillMat = new THREE.MeshStandardMaterial({ color: 0x2f4a23, roughness: 1.0 });
@@ -232,7 +296,8 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
   }
   scene.add(grass);
 
-  // Walls
+  // No straight boundary walls — the cliff ring in terrainHeight() forms a
+  // natural barrier. mkBox is still useful for cover.
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a577a, roughness: 0.6, metalness: 0.25 });
   const mkBox = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material = wallMat) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -244,39 +309,52 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
       new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2),
     ));
   };
-  // Boundary walls — tall enough that a maximum jump from the highest crate
-  // can never exceed wall height (jump apex ≈ 1.45m, tallest crate ≈ 2.6m,
-  // tallest terrain swell ≈ 1.5m; 9m gives a comfortable safety margin).
-  const WALL_H = 9;
-  mkBox(half * 2, WALL_H, 0.8, 0, WALL_H / 2,  half);
-  mkBox(half * 2, WALL_H, 0.8, 0, WALL_H / 2, -half);
-  mkBox(0.8, WALL_H, half * 2,  half, WALL_H / 2, 0);
-  mkBox(0.8, WALL_H, half * 2, -half, WALL_H / 2, 0);
 
-  // Cover bunkers — short L-shaped walls scattered around so there are
-  // sight-lines to break up at long range. Scaled out for the bigger map.
+  // Crate / cover density scales with map area so the player still feels
+  // like there's something to take cover behind even on a 600 m wide map.
+  const playableR = half - 70; // stay clear of the cliff ramp
+  const obsRng = mulberry32(1337);
+
+  // Cover bunkers — L-shaped walls. Cluster them into "battle zones" rather
+  // than evenly distributing, so big swathes of map feel like wilderness.
   const bunkerMat = new THREE.MeshStandardMaterial({ color: 0x3d4a6c, roughness: 0.85 });
-  const bunkers: Array<[number, number]> = [
-    [-32,  26], [ 32, -26], [ 26,  32], [-26, -32],
-    [-44, -12], [ 44,  12], [   0,  46], [   0, -46],
-    [-46,  30], [ 46, -30], [  30, -46], [ -30,  46],
+  const bunkerHubs: Array<[number, number]> = [
+    [   0,  -90], [   0,   90],         // north / south of the river
+    [ 110,    0], [-110,    0],         // east / west arms
+    [  80,   80], [ -80,  -80],
+    [ -80,   80], [  80,  -80],
+    [ 160,   40], [-160,  -40],
+    [  40,  160], [ -40, -160],
+    [ 200,  200], [-200, -200],
+    [ 200, -200], [-200,  200],
   ];
-  for (const [bx, bz] of bunkers) {
-    const gy = terrainHeight(bx, bz, half);
-    mkBox(8, 2.4, 0.7, bx,     gy + 1.2, bz, bunkerMat);
-    mkBox(0.7, 2.4, 6, bx + 4, gy + 1.2, bz - 3, bunkerMat);
+  for (const [hx, hz] of bunkerHubs) {
+    if (Math.hypot(hx, hz) > playableR) continue;
+    // Two L-shaped wall pairs per hub so each forms a small fortified spot.
+    for (let k = 0; k < 2; k++) {
+      const ox = (obsRng() - 0.5) * 14;
+      const oz = (obsRng() - 0.5) * 14;
+      const bx = hx + ox, bz = hz + oz;
+      const gy = terrainHeight(bx, bz, half);
+      mkBox(8, 2.4, 0.7, bx,     gy + 1.2, bz, bunkerMat);
+      mkBox(0.7, 2.4, 6, bx + 4, gy + 1.2, bz - 3, bunkerMat);
+    }
   }
 
   // Crates — deterministic positions so all clients see the same layout.
-  // ~80 crates for the larger arena keeps cover density similar to before.
-  const rng = mulberry32(1337);
+  // Density-based count: roughly 1 crate per 800 m² of playable area.
+  const rng = mulberry32(7331);
   const crateMat = new THREE.MeshStandardMaterial({ color: 0xb2823c, roughness: 0.78 });
-  for (let i = 0; i < 80; i++) {
+  const crateCount = Math.min(220, Math.round((Math.PI * playableR * playableR) / 800));
+  for (let i = 0; i < crateCount; i++) {
     const s = 1.2 + rng() * 1.4;
-    const px = (rng() * 2 - 1) * (half - 2);
-    const pz = (rng() * 2 - 1) * (half - 2);
-    // Avoid spawning crates on top of the center pillar.
-    if (px * px + pz * pz < 16) { i--; continue; }
+    // Sample within a disk so crates respect the round playable area.
+    const ang = rng() * Math.PI * 2;
+    const dist = Math.sqrt(rng()) * playableR;
+    const px = Math.cos(ang) * dist;
+    const pz = Math.sin(ang) * dist;
+    if (px * px + pz * pz < 16) { i--; continue; }    // not on centre pillar
+    if (Math.abs(pz) < 12 && Math.abs(px) < playableR * 0.9) { i--; continue; } // not in river
     const gy = terrainHeight(px, pz, half);
     const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
     c.position.set(px, gy + s * 0.5, pz);
@@ -288,13 +366,16 @@ function buildArena(scene: THREE.Scene, half: number): Obstacles {
     ));
   }
 
-  // A few taller "tower" blocks players can use as cover and jump up to.
+  // Mid-sized "towers" — chest-high blocks that double as ramps onto crates.
   const towerMat = new THREE.MeshStandardMaterial({ color: 0x52628a, roughness: 0.5, metalness: 0.3 });
-  const towers: Array<[number, number]> = [
-    [-18,  18], [ 18, -18], [-38,  0], [ 38, 0], [ 0, 36], [ 0, -36],
-    [-30,  30], [ 30, -30], [-30, -30], [ 30,  30],
-  ];
-  for (const [tx, tz] of towers) {
+  const towerRng = mulberry32(2048);
+  const towerCount = 24;
+  for (let i = 0; i < towerCount; i++) {
+    const ang = towerRng() * Math.PI * 2;
+    const dist = (0.2 + towerRng() * 0.7) * playableR;
+    const tx = Math.cos(ang) * dist;
+    const tz = Math.sin(ang) * dist;
+    if (Math.abs(tz) < 12) continue; // not in river
     const gy = terrainHeight(tx, tz, half);
     mkBox(3, 1.4, 3, tx, gy + 0.7, tz, towerMat);
   }

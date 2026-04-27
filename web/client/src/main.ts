@@ -16,8 +16,10 @@ const refs = createScene(host);
 const input = new InputManager(refs.renderer.domElement, {
   joystickBase: document.getElementById("joystick-base")!,
   joystickHandle: document.getElementById("joystick-handle")!,
+  joystickZone: document.getElementById("joystick-zone")!,
   lookArea: document.getElementById("look-area")!,
   fireButton: document.getElementById("fire-button")!,
+  fireButtonLeft: document.getElementById("fire-button-left")!,
   aimButton: document.getElementById("aim-button")!,
   jumpButton: document.getElementById("jump-button")!,
   scoreboardButton: document.getElementById("scoreboard-button")!,
@@ -25,6 +27,11 @@ const input = new InputManager(refs.renderer.domElement, {
 
 const magazineSize = 30;
 let magazine = magazineSize;
+
+// Distance at which gun, laser, and crosshair converge. 30 m matches the
+// engagement range we expect most fights to happen at; closer/farther shots
+// will have small parallax that the aim-assist sphere absorbs.
+const AIM_CONVERGE_DIST = 30;
 let reloading = false;
 const reloadDuration = 1.6;
 
@@ -149,6 +156,22 @@ function frame(now: number) {
     controller.pitch,
   );
 
+  // Convergent aim: rotate the gun (and its laser) so the barrel points at
+  // the same world point that the camera-centred crosshair is looking at.
+  // Without this, the camera sits behind/right of the player while the gun
+  // points purely along player.yaw — bullets land where the crosshair is
+  // (camera ray) but the laser shows the parallel-shifted gun-yaw axis,
+  // confusing the user. With convergence: laser, gun, crosshair, and bullet
+  // path all meet at the same target point.
+  const camFwd = new THREE.Vector3();
+  refs.camera.getWorldDirection(camFwd);
+  const aimTarget = refs.camera.position.clone().addScaledVector(camFwd, AIM_CONVERGE_DIST);
+  localAvatar.setAimTarget(aimTarget);
+
+  // Keep the directional shadow camera centred on the active player so
+  // shadows render correctly across the whole 600 m map.
+  refs.followSun(controller.position.x, controller.position.z);
+
   if (i.toggleScoreboard) hud.toggleScoreboard();
 
   // Aim-down-sights: FOV and laser-sight track the controller's aim blend.
@@ -164,8 +187,12 @@ function frame(now: number) {
     lastShotAt = performance.now();
     magazine -= 1;
     hud.setMagazine(magazine);
-    const result = aim(refs.camera, avatars);
-    tracers.push(spawnTracer(refs.scene, refs.camera, controller.getMuzzlePosition(), result.point));
+    // Bullet ray runs from the gun barrel to the convergent aim point, so
+    // the visible tracer matches the laser direction exactly.
+    const muzzle = controller.getMuzzlePosition();
+    const bulletDir = aimTarget.clone().sub(muzzle).normalize();
+    const result = aim(muzzle, bulletDir, avatars);
+    tracers.push(spawnTracer(refs.scene, refs.camera, muzzle, result.point));
     if (room && result.targetId) {
       room.send("shoot", { targetId: result.targetId });
     }

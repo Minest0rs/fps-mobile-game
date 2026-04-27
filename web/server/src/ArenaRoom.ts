@@ -5,7 +5,8 @@ interface MoveMsg { x: number; y: number; z: number; yaw: number; pitch: number;
 interface ShootMsg { targetId?: string; }
 interface JoinOpts { name?: string; skin?: string; }
 
-const ARENA_HALF = 60; // matches client builder
+const ARENA_HALF = 300; // matches client builder (open-world map)
+const SPAWN_RADIUS = 60; // cluster fresh spawns near the centre
 const RESPAWN_DELAY_MS = 3000;
 const SHOT_COOLDOWN_MS = 110; // ~9 shots/s
 const SHOT_DAMAGE = 22;
@@ -26,7 +27,9 @@ export class ArenaRoom extends Room<ArenaState> {
       // corrupt their rendering (e.g. yaw=NaN breaks Math.sin in setPose).
       p.x = clamp(safeNum(msg.x), -ARENA_HALF, ARENA_HALF);
       p.z = clamp(safeNum(msg.z), -ARENA_HALF, ARENA_HALF);
-      p.y = clamp(safeNum(msg.y), 0, 8);
+      // Y can climb the mountain (~55 m peak) plus jump height; cap well
+      // above the cliff ring (80 m) so we never stop a legitimate climb.
+      p.y = clamp(safeNum(msg.y), -10, 100);
       p.yaw = safeNum(msg.yaw);
       p.pitch = clamp(safeNum(msg.pitch), -1.4, 1.4);
     });
@@ -102,18 +105,19 @@ export class ArenaRoom extends Room<ArenaState> {
     // spawn inside the central pillar (which is otherwise just a black void
     // for the new player and a frustrating first impression).
     const PILLAR_RADIUS = 3.0;
-    const r = ARENA_HALF * 0.6;
     for (let i = 0; i < 20; i++) {
-      const x = (Math.random() * 2 - 1) * r;
-      const z = (Math.random() * 2 - 1) * r;
-      if (x * x + z * z >= PILLAR_RADIUS * PILLAR_RADIUS) return { x, y: 1.6, z };
+      const x = (Math.random() * 2 - 1) * SPAWN_RADIUS;
+      const z = (Math.random() * 2 - 1) * SPAWN_RADIUS;
+      // Avoid the river corridor (z near 0) and the centre pillar.
+      if (Math.abs(z) < 14) continue;
+      if (x * x + z * z >= PILLAR_RADIUS * PILLAR_RADIUS) return { x, y: 5, z };
     }
-    // Fallback (very unlikely): place on a circle at radius PILLAR_RADIUS+1.
+    // Fallback (very unlikely): place on a circle just outside the pillar.
     const angle = Math.random() * Math.PI * 2;
     return {
-      x: Math.cos(angle) * (PILLAR_RADIUS + 1),
-      y: 1.6,
-      z: Math.sin(angle) * (PILLAR_RADIUS + 1),
+      x: Math.cos(angle) * 8,
+      y: 5,
+      z: Math.sin(angle) * 8 + 16, // pushed off the river
     };
   }
 

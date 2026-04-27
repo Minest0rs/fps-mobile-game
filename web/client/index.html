@@ -38,9 +38,15 @@
     <div id="scoreboard" class="hidden"></div>
 
     <div id="touch-controls" class="touch-only">
+      <!-- Big invisible zone on the left half of the screen: tapping anywhere
+           in here anchors the joystick at the touch point (dynamic joystick). -->
+      <div id="joystick-zone"></div>
       <div id="joystick-base"><div id="joystick-handle"></div></div>
       <div id="look-area"></div>
       <button id="fire-button" class="touch-button">FIRE</button>
+      <!-- Secondary fire button on the left so the user can shoot with their
+           left thumb while moving / aiming with the right. -->
+      <button id="fire-button-left" class="touch-button">FIRE</button>
       <button id="aim-button" class="touch-button">AIM</button>
       <button id="jump-button" class="touch-button">JUMP</button>
       <button id="scoreboard-button" class="touch-button small">SCORE</button>

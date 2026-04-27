@@ -6,21 +6,20 @@ export interface AimResult {
   point: THREE.Vector3;
 }
 
-/** Given the camera and all remote avatars, return the closest player hit
- *  (with generous aim assist) and the impact point along the shot.
+/** Given an aim ray (origin + direction) and all remote avatars, return the
+ *  closest player hit (with generous aim assist) and the impact point along
+ *  the shot.
  *
  *  We test a fat sphere around each avatar rather than the visible meshes so
  *  long-range shots that *look* on-target actually register. The sphere is
  *  much larger than the visible body — about player width — so the user
  *  doesn't have to be pixel-perfect at 30+ metres. */
 export function aim(
-  camera: THREE.PerspectiveCamera,
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
   avatars: Map<string, Avatar>,
   range = 300,
 ): AimResult {
-  const origin = camera.position.clone();
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
 
   // Scale hit radius with distance: at point-blank we keep it tight (~head/
   // shoulder size), but at long range we widen the volume substantially so a

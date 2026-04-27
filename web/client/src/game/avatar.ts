@@ -104,7 +104,20 @@ export class Avatar {
     // After applying group Y-rotation, a positive X-rotation tilts the gun's
     // local -Z forward toward +Y (i.e. up), which matches how `pitch > 0`
     // means "looking up" everywhere else in the controller.
-    this.gun.rotation.x = pitch;
+    this.gun.rotation.set(pitch, 0, 0);
+  }
+
+  /** Aim the gun (and its laser) at a specific world point so the visual
+   *  barrel direction converges with where the camera-centred crosshair is
+   *  looking. Used for the local player only — remote avatars use the
+   *  replicated yaw/pitch directly via setPose(). */
+  setAimTarget(target: THREE.Vector3) {
+    // Object3D.lookAt aligns the local -Z axis with the target. The gun's
+    // local -Z is the barrel forward (matches the laser direction), so this
+    // is exactly what we want. Parent transform (group rotation) is taken
+    // into account, so we don't need to manually invert the player's yaw.
+    this.group.updateMatrixWorld(true);
+    this.gun.lookAt(target);
   }
 
   setLaserVisible(v: boolean) {
