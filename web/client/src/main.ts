@@ -30,7 +30,7 @@ const reloadDuration = 1.6;
 const hud = new Hud();
 hud.setMagazine(magazine);
 
-const controller = new LocalController(refs.camera, refs.arenaHalf);
+const controller = new LocalController(refs.camera, refs.arenaHalf, refs.obstacles);
 
 let room: Room<ArenaStateLike> | null = null;
 const avatars = new Map<string, Avatar>();
@@ -58,7 +58,15 @@ function bindRoom(r: Room<ArenaStateLike>) {
   r.state.players.onAdd((p: PlayerState, id: string) => {
     if (id === r.sessionId) {
       controller.setPosition(p.x, p.y, p.z);
-      // Owner mesh is hidden — we render through the camera.
+      // Watch our own state so respawns (server picks a new spawn point and
+      // resets hp to 100) actually teleport the camera to the new position.
+      let prevHp = p.hp;
+      (p as any).onChange?.(() => {
+        if (prevHp <= 0 && p.hp > 0) {
+          controller.setPosition(p.x, p.y, p.z);
+        }
+        prevHp = p.hp;
+      });
       return;
     }
     const av = new Avatar(p.name, p.skin);
@@ -96,31 +104,35 @@ function frame(now: number) {
   const i = input.consume();
   controller.update(dt, i);
 
+  let alive = true;
   if (room) {
     const me = room.state.players.get(room.sessionId);
     if (me) {
       hud.setHp(me.hp);
-      // Push position to server every frame; server clamps and reflects state.
-      room.send("move", {
-        x: controller.position.x,
-        y: controller.position.y,
-        z: controller.position.z,
-        yaw: controller.yaw,
-        pitch: controller.pitch,
-      });
+      alive = me.hp > 0;
+      if (alive) {
+        // Push position to server every frame; server clamps and reflects state.
+        room.send("move", {
+          x: controller.position.x,
+          y: controller.position.y,
+          z: controller.position.z,
+          yaw: controller.yaw,
+          pitch: controller.pitch,
+        });
+      }
     }
     hud.refreshScoreboard(room.state);
   }
 
   if (i.toggleScoreboard) hud.toggleScoreboard();
 
-  // Shooting
-  if (i.fireHeld && !reloading && magazine > 0 && performance.now() - lastShotAt > shotIntervalMs) {
+  // Shooting (no firing while dead)
+  if (alive && i.fireHeld && !reloading && magazine > 0 && performance.now() - lastShotAt > shotIntervalMs) {
     lastShotAt = performance.now();
     magazine -= 1;
     hud.setMagazine(magazine);
     const result = aim(refs.camera, avatars);
-    tracers.push(spawnTracer(refs.scene, refs.camera.position.clone(), result.point));
+    tracers.push(spawnTracer(refs.scene, refs.camera, refs.camera.position.clone(), result.point));
     if (room && result.targetId) {
       room.send("shoot", { targetId: result.targetId });
     }

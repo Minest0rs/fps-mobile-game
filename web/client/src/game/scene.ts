@@ -1,10 +1,17 @@
 import * as THREE from "three";
 
+export interface CylinderObstacle { x: number; z: number; r: number; }
+export interface Obstacles {
+  boxes: THREE.Box3[];
+  cylinders: CylinderObstacle[];
+}
+
 export interface SceneRefs {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGLRenderer;
   arenaHalf: number;
+  obstacles: Obstacles;
 }
 
 /** Build the renderer, camera, lights, sky, ground, walls, and crates. */
@@ -72,7 +79,7 @@ export function createScene(host: HTMLElement): SceneRefs {
   }
 
   const arenaHalf = 19;
-  buildArena(scene, arenaHalf);
+  const obstacles = buildArena(scene, arenaHalf);
 
   const fit = () => {
     renderer.setSize(host.clientWidth, host.clientHeight, false);
@@ -85,10 +92,11 @@ export function createScene(host: HTMLElement): SceneRefs {
   new ResizeObserver(fit).observe(host);
   fit();
 
-  return { scene, camera, renderer, arenaHalf };
+  return { scene, camera, renderer, arenaHalf, obstacles };
 }
 
-function buildArena(scene: THREE.Scene, half: number) {
+function buildArena(scene: THREE.Scene, half: number): Obstacles {
+  const obstacles: Obstacles = { boxes: [], cylinders: [] };
   // Ground — lighter so the sun's directional light reads clearly.
   const groundMat = new THREE.MeshStandardMaterial({ color: 0x36405a, roughness: 0.9, metalness: 0.1 });
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, half * 2), groundMat);
@@ -109,6 +117,10 @@ function buildArena(scene: THREE.Scene, half: number) {
     m.position.set(x, y, z);
     m.castShadow = true; m.receiveShadow = true;
     scene.add(m);
+    obstacles.boxes.push(new THREE.Box3(
+      new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
+      new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2),
+    ));
   };
   mkWall(half * 2, 4, 0.6, 0, 2, half);
   mkWall(half * 2, 4, 0.6, 0, 2, -half);
@@ -120,14 +132,18 @@ function buildArena(scene: THREE.Scene, half: number) {
   const crateMat = new THREE.MeshStandardMaterial({ color: 0xb2823c, roughness: 0.78 });
   for (let i = 0; i < 14; i++) {
     const s = 1.4 + rng() * 1.2;
+    const px = (rng() * 2 - 1) * (half - 2);
+    const pz = (rng() * 2 - 1) * (half - 2);
+    // Avoid spawning crates on top of the center pillar.
+    if (px * px + pz * pz < 9) { i--; continue; }
     const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
-    c.position.set(
-      (rng() * 2 - 1) * (half - 2),
-      s * 0.5,
-      (rng() * 2 - 1) * (half - 2),
-    );
+    c.position.set(px, s * 0.5, pz);
     c.castShadow = true; c.receiveShadow = true;
     scene.add(c);
+    obstacles.boxes.push(new THREE.Box3(
+      new THREE.Vector3(px - s / 2, 0,     pz - s / 2),
+      new THREE.Vector3(px + s / 2, s,     pz + s / 2),
+    ));
   }
 
   // Center pillar with a glowing top so the middle of the arena is a landmark.
@@ -152,6 +168,9 @@ function buildArena(scene: THREE.Scene, half: number) {
   const beaconLight = new THREE.PointLight(0x4cffd6, 1.4, 18, 1.6);
   beaconLight.position.set(0, 4.6, 0);
   scene.add(beaconLight);
+
+  obstacles.cylinders.push({ x: 0, z: 0, r: 1.2 });
+  return obstacles;
 }
 
 function mulberry32(seed: number) {
