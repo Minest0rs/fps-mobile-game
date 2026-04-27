@@ -1,5 +1,14 @@
 import { ArenaState, Player } from "./state.js";
 import { WEAPONS, getWeapon } from "./weapons.js";
+import { generateObstacles, segmentBlockedByObstacles, type SharedObstacle } from "./sharedObstacles.js";
+
+/** Shared obstacle list used by bot LOS checks. Generated once per process
+ *  (the layout is deterministic and arena-half-dependent only). */
+let cachedObstacles: SharedObstacle[] | null = null;
+function getObstacles(arenaHalf: number): SharedObstacle[] {
+  if (!cachedObstacles) cachedObstacles = generateObstacles(arenaHalf);
+  return cachedObstacles;
+}
 
 /** Difficulty profile applied to bots at spawn time.
  *  - `hitChance` is the per-shot probability of actually applying damage
@@ -135,11 +144,22 @@ export function tickBots(
     // Fire if the target is within weapon range and our cooldown is up.
     const w = getWeapon(bot.weapon);
     const cooldown = Math.max(w.fireRateMs, profile.fireDelayMs);
-    if (dist < w.maxRange && now - bot.lastShotAt > cooldown) {
+    // Cap bot effective range — even a sniper bot only fires within 60 m
+    // so the open 600 m arena doesn't turn into a turret simulator.
+    const botRange = Math.min(w.maxRange, 60);
+    if (dist < botRange && now - bot.lastShotAt > cooldown) {
+      // LOS: if any obstacle (rock / shack / crate) blocks the segment
+      // between bot and target, the shot is suppressed. This is what
+      // lets players actually use cover.
+      const obstacles = getObstacles(arenaHalf);
+      if (segmentBlockedByObstacles(bot.x, bot.z, target.x, target.z, obstacles)) {
+        bot.lastShotAt = now;
+        return;
+      }
       // Most bot shots miss. We also bleed off accuracy with distance so
       // bots feel weaker the further you are from them — important for
       // making the open 600 m arena playable against AI.
-      const distFalloff = Math.max(0, 1 - dist / Math.max(40, w.maxRange));
+      const distFalloff = Math.max(0, 1 - dist / botRange);
       const effectiveChance = profile.hitChance * (0.4 + 0.6 * distFalloff);
       if (Math.random() < effectiveChance) {
         // Bot damage is also reduced — weapon damage is calibrated for

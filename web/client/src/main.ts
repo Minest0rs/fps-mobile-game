@@ -116,18 +116,23 @@ function bindRoom(r: Room<ArenaStateLike>) {
     // movement, since the server reflects our own state back to us.
     if (id === r.sessionId) return;
     const av = new Avatar(p.name, p.skin);
-    // Snap remote players to local terrain so they don't appear floating
-    // (the server doesn't know about the heightfield, so it sends y = 5
-    // for fresh spawns regardless of the actual ground at (x, z)).
-    const snapY = (x: number, y: number, z: number) =>
-      Math.max(y, refs.heightAt(x, z) + 1.6);
-    av.setPose(p.x, snapY(p.x, p.y, p.z), p.z, p.yaw, p.pitch);
+    // Snap remote players to local terrain so they don't appear floating.
+    // The server doesn't know about the heightfield (it just clamps Y to a
+    // safe range), so for *bots* — which never simulate gravity client-side
+    // — we always pin to ground level. For human remote players we still
+    // allow the server's Y to win when it's higher than the ground (so
+    // jumps replicate), but only by a small clearance.
+    const snapY = (x: number, y: number, z: number, isBot: boolean) => {
+      const ground = refs.heightAt(x, z) + 1.6;
+      return isBot ? ground : Math.max(y, ground);
+    };
+    av.setPose(p.x, snapY(p.x, p.y, p.z, !!p.isBot), p.z, p.yaw, p.pitch);
     av.setVisible(p.hp > 0);
     refs.scene.add(av.group);
     avatars.set(id, av);
     // Schema 2.x style: onChange is a method that returns an unsubscribe fn.
     const sync = () => {
-      av.setPose(p.x, snapY(p.x, p.y, p.z), p.z, p.yaw, p.pitch);
+      av.setPose(p.x, snapY(p.x, p.y, p.z, !!p.isBot), p.z, p.yaw, p.pitch);
       av.setVisible(p.hp > 0);
     };
     (p as any).onChange?.(sync);

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
+import { generateObstacles } from "./sharedObstacles";
 
 export interface CylinderObstacle { x: number; z: number; r: number; }
 export interface Obstacles {
@@ -323,106 +324,94 @@ function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[
   }
   scene.add(grass);
 
-  // No straight boundary walls — the cliff ring in terrainHeight() forms a
-  // natural barrier. mkBox is still useful for cover.
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x4a577a, roughness: 0.6, metalness: 0.25 });
-  const mkBox = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material = wallMat) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
-    m.castShadow = true; m.receiveShadow = true;
-    addSolid(m);
-    obstacles.boxes.push(new THREE.Box3(
-      new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
-      new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2),
-    ));
-  };
-
-  // Crate / cover density scales with map area so the player still feels
-  // like there's something to take cover behind even on a 600 m wide map.
-  const playableR = half - 70; // stay clear of the cliff ramp
-  const obsRng = mulberry32(1337);
-
-  // Helper: max height delta within ±r metres of (x, z). Axis-aligned boxes
-  // levitate visibly on steep slopes (corners poke into the air), so we
-  // refuse to place obstacles where the slope would expose more than ~0.6 m.
-  const slopeAt = (x: number, z: number, r: number) => {
-    const a = terrainHeight(x + r, z, half);
-    const b = terrainHeight(x - r, z, half);
-    const c = terrainHeight(x, z + r, half);
-    const d = terrainHeight(x, z - r, half);
-    return Math.max(a, b, c, d) - Math.min(a, b, c, d);
-  };
-
-  // Cover bunkers — L-shaped walls. Cluster them into "battle zones" rather
-  // than evenly distributing, so big swathes of map feel like wilderness.
-  const bunkerMat = new THREE.MeshStandardMaterial({ color: 0x3d4a6c, roughness: 0.85 });
-  const bunkerHubs: Array<[number, number]> = [
-    [   0,  -90], [   0,   90],         // north / south of the river
-    [ 110,    0], [-110,    0],         // east / west arms
-    [  80,   80], [ -80,  -80],
-    [ -80,   80], [  80,  -80],
-    [ 160,   40], [-160,  -40],
-    [  40,  160], [ -40, -160],
-    [ 200,  200], [-200, -200],
-    [ 200, -200], [-200,  200],
+  // Place the shared, deterministic obstacle list (rocks / trees / shacks
+  // / crates). Each obstacle's mesh is rendered here, but its collision
+  // box is the same one the server uses for line-of-sight (so what you
+  // see is what blocks bot shots).
+  const shared = generateObstacles(half);
+  // Reused materials so we only allocate once per visual variant.
+  const rockMats = [
+    new THREE.MeshStandardMaterial({ color: 0x6a6e74, roughness: 0.95, flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: 0x55585e, roughness: 0.95, flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: 0x7a7a72, roughness: 0.95, flatShading: true }),
   ];
-  for (const [hx, hz] of bunkerHubs) {
-    if (Math.hypot(hx, hz) > playableR) continue;
-    // Two L-shaped wall pairs per hub so each forms a small fortified spot.
-    for (let k = 0; k < 2; k++) {
-      const ox = (obsRng() - 0.5) * 14;
-      const oz = (obsRng() - 0.5) * 14;
-      const bx = hx + ox, bz = hz + oz;
-      // Skip steep slopes where the wall would obviously levitate.
-      if (slopeAt(bx, bz, 4) > 1.2) continue;
-      const gy = terrainHeight(bx, bz, half);
-      // Sink the base 0.3 m so any small mesh-vs-analytic mismatch hides
-      // under the ground rather than appearing as a gap.
-      mkBox(8, 2.4, 0.7, bx,     gy + 0.9, bz, bunkerMat);
-      mkBox(0.7, 2.4, 6, bx + 4, gy + 0.9, bz - 3, bunkerMat);
-    }
-  }
-
-  // Crates — deterministic positions so all clients see the same layout.
-  // Density-based count: roughly 1 crate per 800 m² of playable area.
-  const rng = mulberry32(7331);
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.95 });
+  const leafMats = [
+    new THREE.MeshStandardMaterial({ color: 0x356a2c, roughness: 1.0, flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: 0x2c5a23, roughness: 1.0, flatShading: true }),
+    new THREE.MeshStandardMaterial({ color: 0x4f7a31, roughness: 1.0, flatShading: true }),
+  ];
+  const shackWallMat = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.85 });
+  const shackRoofMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9 });
   const crateMat = new THREE.MeshStandardMaterial({ color: 0xb2823c, roughness: 0.78 });
-  const crateCount = Math.min(220, Math.round((Math.PI * playableR * playableR) / 800));
-  for (let i = 0; i < crateCount; i++) {
-    const s = 1.2 + rng() * 1.4;
-    // Sample within a disk so crates respect the round playable area.
-    const ang = rng() * Math.PI * 2;
-    const dist = Math.sqrt(rng()) * playableR;
-    const px = Math.cos(ang) * dist;
-    const pz = Math.sin(ang) * dist;
-    if (px * px + pz * pz < 16) { i--; continue; }    // not on centre pillar
-    if (Math.abs(pz) < 18 && Math.abs(px) < playableR * 0.9) { i--; continue; } // not in river
-    if (slopeAt(px, pz, s * 0.6) > s * 0.8) { i--; continue; } // skip steep slopes
-    const gy = terrainHeight(px, pz, half);
-    const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
-    // Sink half the slope-tolerance so corners on uneven ground stay buried.
-    c.position.set(px, gy + s * 0.5 - 0.15, pz);
-    c.castShadow = true; c.receiveShadow = true;
-    addSolid(c);
-    obstacles.boxes.push(new THREE.Box3(
-      new THREE.Vector3(px - s / 2, gy,     pz - s / 2),
-      new THREE.Vector3(px + s / 2, gy + s, pz + s / 2),
-    ));
-  }
 
-  // Mid-sized "towers" — chest-high blocks that double as ramps onto crates.
-  const towerMat = new THREE.MeshStandardMaterial({ color: 0x52628a, roughness: 0.5, metalness: 0.3 });
-  const towerRng = mulberry32(2048);
-  const towerCount = 24;
-  for (let i = 0; i < towerCount; i++) {
-    const ang = towerRng() * Math.PI * 2;
-    const dist = (0.2 + towerRng() * 0.7) * playableR;
-    const tx = Math.cos(ang) * dist;
-    const tz = Math.sin(ang) * dist;
-    if (Math.abs(tz) < 18) continue; // not in river
-    if (slopeAt(tx, tz, 1.5) > 1.0) continue; // skip steep slopes
-    const gy = terrainHeight(tx, tz, half);
-    mkBox(3, 1.4, 3, tx, gy + 0.55, tz, towerMat);
+  for (const o of shared) {
+    const gy = terrainHeight(o.x, o.z, half);
+    if (o.type === "rock") {
+      // Boulder: a flattened icosahedron with a slight non-uniform scale so
+      // each rock looks unique without needing a unique geometry.
+      const r = o.w / 2;
+      const rock = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(r, 0),
+        rockMats[o.variant % rockMats.length],
+      );
+      rock.position.set(o.x, gy + r * 0.7 - 0.2, o.z);
+      rock.scale.set(1.0 + (o.variant % 3) * 0.08, 0.7 + (o.variant % 4) * 0.05, 1.0 + (o.variant % 5) * 0.05);
+      rock.rotation.y = (o.variant * 0.7) % (Math.PI * 2);
+      rock.castShadow = true; rock.receiveShadow = true;
+      addSolid(rock);
+      obstacles.boxes.push(new THREE.Box3(
+        new THREE.Vector3(o.x - r, gy,            o.z - r),
+        new THREE.Vector3(o.x + r, gy + r * 1.4, o.z + r),
+      ));
+    } else if (o.type === "tree") {
+      // Simple low-poly tree: cylinder trunk + cone canopy.
+      const trunkH = o.h * 0.55;
+      const canopyH = o.h * 0.6;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.40, trunkH, 8), trunkMat);
+      trunk.position.set(o.x, gy + trunkH / 2 - 0.1, o.z);
+      trunk.castShadow = true; trunk.receiveShadow = true;
+      addSolid(trunk);
+      const canopy = new THREE.Mesh(
+        new THREE.ConeGeometry(o.h * 0.35, canopyH, 8),
+        leafMats[o.variant % leafMats.length],
+      );
+      canopy.position.set(o.x, gy + trunkH + canopyH / 2 - 0.4, o.z);
+      canopy.castShadow = true;
+      scene.add(canopy); // canopy isn't a hard collider, only the trunk is
+      obstacles.boxes.push(new THREE.Box3(
+        new THREE.Vector3(o.x - 0.4, gy,             o.z - 0.4),
+        new THREE.Vector3(o.x + 0.4, gy + trunkH,    o.z + 0.4),
+      ));
+    } else if (o.type === "shack") {
+      // Box body + 4-sided pyramid roof. Looks like a small wooden cabin.
+      const body = new THREE.Mesh(new THREE.BoxGeometry(o.w, o.h, o.d), shackWallMat);
+      body.position.set(o.x, gy + o.h / 2 - 0.2, o.z);
+      body.castShadow = true; body.receiveShadow = true;
+      addSolid(body);
+      const roof = new THREE.Mesh(
+        new THREE.ConeGeometry(Math.max(o.w, o.d) * 0.75, 1.6, 4),
+        shackRoofMat,
+      );
+      roof.position.set(o.x, gy + o.h + 0.6, o.z);
+      roof.rotation.y = Math.PI / 4; // align the 4-sided cone to the box
+      roof.castShadow = true;
+      scene.add(roof);
+      obstacles.boxes.push(new THREE.Box3(
+        new THREE.Vector3(o.x - o.w / 2, gy,             o.z - o.d / 2),
+        new THREE.Vector3(o.x + o.w / 2, gy + o.h + 1.0, o.z + o.d / 2),
+      ));
+    } else { // crate
+      const s = o.w;
+      const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
+      c.position.set(o.x, gy + s * 0.5 - 0.1, o.z);
+      c.castShadow = true; c.receiveShadow = true;
+      addSolid(c);
+      obstacles.boxes.push(new THREE.Box3(
+        new THREE.Vector3(o.x - s / 2, gy,     o.z - s / 2),
+        new THREE.Vector3(o.x + s / 2, gy + s, o.z + s / 2),
+      ));
+    }
   }
 
   // Center pillar with a glowing top so the middle of the arena is a landmark.
