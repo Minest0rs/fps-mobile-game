@@ -17,8 +17,12 @@ export class Player extends Schema {
   @type("number") respawnAt = 0;
 }
 
-/** A row in the recent-kill log; rendered by clients as the kill feed. */
+/** A row in the recent-kill log; rendered by clients as the kill feed.
+ *  `attackerId` / `victimId` carry session ids so clients can highlight
+ *  rows involving the local player; the name fields are display only. */
 export class KillEntry extends Schema {
+  @type("string") attackerId = "";
+  @type("string") victimId = "";
   @type("string") attacker = "";
   @type("string") victim = "";
   @type("number") at = 0;

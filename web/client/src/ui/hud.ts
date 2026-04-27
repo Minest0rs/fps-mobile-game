@@ -14,7 +14,7 @@ export class Hud {
 
   private myId = "";
 
-  constructor(private getMagazine: () => number) {}
+  constructor() {}
 
   bind(room: Room<ArenaStateLike>, myId: string) {
     this.myId = myId;
@@ -27,15 +27,15 @@ export class Hud {
     this.hpFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
   }
 
-  setMagazine(_value: number) {
-    this.ammo.textContent = String(this.getMagazine());
+  setMagazine(value: number) {
+    this.ammo.textContent = String(value);
   }
 
   appendKill(k: KillEntryState) {
     const row = document.createElement("div");
     row.className = "row";
-    const meVictim = k.victim === this.myId;
-    const meAttacker = k.attacker === this.myId;
+    const meAttacker = k.attackerId === this.myId;
+    const meVictim = k.victimId === this.myId;
     const a = meAttacker ? `<span class="me">${escape(k.attacker)}</span>` : escape(k.attacker);
     const v = meVictim ? `<span class="me">${escape(k.victim)}</span>` : escape(k.victim);
     row.innerHTML = `${a} → ${v}`;

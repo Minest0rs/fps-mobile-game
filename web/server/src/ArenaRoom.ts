@@ -70,6 +70,8 @@ export class ArenaRoom extends Room<ArenaState> {
     victim.respawnAt = Date.now() + RESPAWN_DELAY_MS;
 
     const entry = new KillEntry();
+    entry.attackerId = attacker.id;
+    entry.victimId = victim.id;
     entry.attacker = attacker.name;
     entry.victim = victim.name;
     entry.at = Date.now();

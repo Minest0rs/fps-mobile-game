@@ -11,6 +11,8 @@ export interface PlayerState {
 }
 
 export interface KillEntryState {
+  attackerId: string;
+  victimId: string;
   attacker: string;
   victim: string;
   at: number;

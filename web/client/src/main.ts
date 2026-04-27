@@ -27,7 +27,7 @@ let magazine = magazineSize;
 let reloading = false;
 const reloadDuration = 1.6;
 
-const hud = new Hud(() => magazine);
+const hud = new Hud();
 hud.setMagazine(magazine);
 
 const controller = new LocalController(refs.camera, refs.arenaHalf);
