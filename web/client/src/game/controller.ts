@@ -12,7 +12,9 @@ const PITCH_LIMIT = 1.4;
  * and reflects that position back through the replicated state.
  */
 export class LocalController {
-  readonly position = new THREE.Vector3(0, 1.6, 0);
+  // Starting position is offset from origin so that, even before the server
+  // delivers a real spawn point, the camera isn't inside the center pillar.
+  readonly position = new THREE.Vector3(8, 1.6, 8);
   yaw = 0;
   pitch = 0;
   private velocityY = 0;

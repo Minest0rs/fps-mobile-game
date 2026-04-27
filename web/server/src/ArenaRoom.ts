@@ -93,13 +93,25 @@ export class ArenaRoom extends Room<ArenaState> {
   }
 
   private spawnPoint() {
+    // Pick a point at least PILLAR_RADIUS away from origin so we never
+    // spawn inside the central pillar (which is otherwise just a black void
+    // for the new player and a frustrating first impression).
+    const PILLAR_RADIUS = 2.5;
     const r = ARENA_HALF * 0.6;
+    for (let i = 0; i < 20; i++) {
+      const x = (Math.random() * 2 - 1) * r;
+      const z = (Math.random() * 2 - 1) * r;
+      if (x * x + z * z >= PILLAR_RADIUS * PILLAR_RADIUS) return { x, y: 1.6, z };
+    }
+    // Fallback (very unlikely): place on a circle at radius PILLAR_RADIUS+1.
+    const angle = Math.random() * Math.PI * 2;
     return {
-      x: (Math.random() * 2 - 1) * r,
+      x: Math.cos(angle) * (PILLAR_RADIUS + 1),
       y: 1.6,
-      z: (Math.random() * 2 - 1) * r,
+      z: Math.sin(angle) * (PILLAR_RADIUS + 1),
     };
   }
+
 }
 
 function clamp(v: number, lo: number, hi: number) {

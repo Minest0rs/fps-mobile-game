@@ -14,10 +14,21 @@ export function createScene(host: HTMLElement): SceneRefs {
   scene.fog = new THREE.Fog(0x0b0d12, 25, 80);
 
   const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 200);
+  // Sit the camera somewhere visible until the server tells us where to spawn.
+  // (0,1.6,0) puts us inside the center pillar and shows nothing — avoid that.
+  camera.position.set(8, 1.6, 8);
+  camera.lookAt(0, 1.6, 0);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  // Try webgl2 with antialias; fall back to webgl1 without for older mobile GPUs.
+  let renderer: THREE.WebGLRenderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "default" });
+  } catch (e) {
+    console.warn("antialias renderer failed, retrying without:", e);
+    renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "default" });
+  }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(host.clientWidth, host.clientHeight, false);
+  renderer.setSize(Math.max(1, host.clientWidth), Math.max(1, host.clientHeight), false);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   host.appendChild(renderer.domElement);
