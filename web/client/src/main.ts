@@ -245,6 +245,10 @@ function frame(now: number) {
     lastShotAt = performance.now();
     magazine -= 1;
     hud.setMagazine(magazine);
+    // Per-weapon recoil. The controller absorbs the kick and lets it bleed
+    // back over ~180 ms, so the player sees the camera jolt up + slightly
+    // sideways and can compensate by pulling down on touch / mouse.
+    controller.applyRecoil(weapon.recoil);
     // Spawn tracer from the *visible* barrel tip (rotated by the convergent
     // aim) so the user sees bullets fly from where their gun is pointing,
     // not from a yaw-only approximation behind/below the actual barrel.

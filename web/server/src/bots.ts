@@ -1,6 +1,12 @@
 import { ArenaState, Player } from "./state.js";
 import { WEAPONS, getWeapon } from "./weapons.js";
-import { generateObstacles, segmentBlockedByObstacles, type SharedObstacle } from "./sharedObstacles.js";
+import {
+  generateObstacles,
+  segmentBlockedByObstacles,
+  segmentBlockedByTerrain,
+  terrainHeight,
+  type SharedObstacle,
+} from "./sharedObstacles.js";
 
 /** Shared obstacle list used by bot LOS checks. Generated once per process
  *  (the layout is deterministic and arena-half-dependent only). */
@@ -82,13 +88,13 @@ export function tickBots(
   const now = Date.now();
   const events: Array<{ attackerId: string; victimId: string; damage: number }> = [];
 
-  // Snapshot the current human players so bots prefer hunting them rather
-  // than each other (otherwise pure bot lobbies would be a snake-pit).
-  const humans: Player[] = [];
-  state.players.forEach((p) => { if (!p.isBot && p.hp > 0) humans.push(p); });
-
   state.players.forEach((bot) => {
     if (!bot.isBot) return;
+
+    // Snap bot Y to the heightfield each tick so they walk on terrain
+    // instead of hovering at the spawn Y. Without this, a bot that walks
+    // up the mountain ends up "swimming" through it.
+    bot.y = terrainHeight(bot.x, bot.z, arenaHalf) + 1.6;
 
     // Respawn dead bots after the same delay as humans.
     if (bot.hp <= 0) {
@@ -101,22 +107,19 @@ export function tickBots(
       return;
     }
 
-    // Pick the nearest human (or any other live bot if no humans).
+    // Pick the nearest live entity (human OR other bot). Humans are
+    // weighted as if they were ~30% closer so a bot will turn on its
+    // peers when no human is nearby, but still prefers the player when
+    // both are in range. This makes bot lobbies feel alive even when
+    // the human is hiding.
     let nearest: Player | null = null;
-    let nearestDistSq = Infinity;
-    const candidates = humans.length > 0 ? humans : [];
-    if (candidates.length === 0) {
-      state.players.forEach((p) => {
-        if (p === bot || p.hp <= 0) return;
-        const d = sqDistXZ(bot, p);
-        if (d < nearestDistSq) { nearestDistSq = d; nearest = p; }
-      });
-    } else {
-      for (const h of candidates) {
-        const d = sqDistXZ(bot, h);
-        if (d < nearestDistSq) { nearestDistSq = d; nearest = h; }
-      }
-    }
+    let nearestScore = Infinity;
+    state.players.forEach((p) => {
+      if (p === bot || p.hp <= 0) return;
+      const d2 = sqDistXZ(bot, p);
+      const score = p.isBot ? d2 : d2 * 0.5; // lower score = more attractive
+      if (score < nearestScore) { nearestScore = score; nearest = p; }
+    });
 
     if (!nearest) return;
     const target = nearest as Player;
@@ -148,9 +151,17 @@ export function tickBots(
     // so the open 600 m arena doesn't turn into a turret simulator.
     const botRange = Math.min(w.maxRange, 60);
     if (dist < botRange && now - bot.lastShotAt > cooldown) {
-      // LOS: if any obstacle (rock / shack / crate) blocks the segment
-      // between bot and target, the shot is suppressed. This is what
-      // lets players actually use cover.
+      // LOS check 1: terrain. If a hill is in the way between the bot's
+      // eye and the target's eye, the shot is suppressed.
+      const eyeY1 = bot.y;
+      const eyeY2 = target.y;
+      if (segmentBlockedByTerrain(bot.x, bot.z, eyeY1, target.x, target.z, eyeY2, arenaHalf)) {
+        bot.lastShotAt = now;
+        return;
+      }
+      // LOS check 2: obstacles (rock / shack / crate). Players can take
+      // cover behind these. Trees are deliberately excluded — narrow
+      // trunks shouldn't grant LOS-immunity.
       const obstacles = getObstacles(arenaHalf);
       if (segmentBlockedByObstacles(bot.x, bot.z, target.x, target.z, obstacles)) {
         bot.lastShotAt = now;

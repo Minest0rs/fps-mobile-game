@@ -37,6 +37,14 @@ export class LocalController {
   aimBlend = 0;
   /** Mutable gravity so match-events (low gravity) can swap it at runtime. */
   gravity = DEFAULT_GRAVITY;
+  /** Accumulated recoil that bleeds back toward zero each frame. The
+   *  effective camera pitch/yaw shown to the player is `pitch + recoilPitch`
+   *  / `yaw + recoilYaw`, so a shot kicks the view up and slightly left or
+   *  right, then drifts back. The user's input directly modifies pitch/yaw,
+   *  so dragging down while firing fights the kick the way it does in real
+   *  shooters. */
+  private recoilPitch = 0;
+  private recoilYaw = 0;
   private velocityY = 0;
   private grounded = true;
 
@@ -62,6 +70,18 @@ export class LocalController {
     }
   }
 
+  /** Inject a recoil impulse from a fired weapon. Strength comes from
+   *  `WeaponDef.recoil` (radians) — a sniper kicks the view up several
+   *  degrees, an SMG barely a fraction of one. Yaw kick is a small random
+   *  fraction of the strength so spray patterns wobble side-to-side. */
+  applyRecoil(strength: number) {
+    // ADS reduces felt recoil (you're bracing the gun against your
+    // shoulder), matching the behaviour of every modern shooter.
+    const factor = 1 - 0.4 * this.aimBlend;
+    this.recoilPitch += strength * factor;
+    this.recoilYaw += (Math.random() - 0.5) * strength * 0.5 * factor;
+  }
+
   /** Runs every frame. Returns true if any state worth syncing changed. */
   update(dt: number, input: ReturnType<InputManager["consume"]>): boolean {
     // Smoothly blend the ADS amount so camera transitions are not jarring.
@@ -73,6 +93,13 @@ export class LocalController {
     this.pitch -= input.lookDelta.y * lookScale;
     if (this.pitch > PITCH_LIMIT) this.pitch = PITCH_LIMIT;
     if (this.pitch < -PITCH_LIMIT) this.pitch = -PITCH_LIMIT;
+
+    // Recoil bleeds back to zero with an ~180 ms time constant. The user's
+    // own pull-down input above is independent — they can choose to fight
+    // the kick or let it ride.
+    const recoilDecay = Math.pow(0.0015, dt);
+    this.recoilPitch *= recoilDecay;
+    this.recoilYaw *= recoilDecay;
 
     const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right   = new THREE.Vector3(Math.cos(this.yaw),  0, -Math.sin(this.yaw));
@@ -120,15 +147,19 @@ export class LocalController {
     const arcBulge = SHOULDER_ARC * Math.sin(Math.PI * t);
     const shoulder = baseShoulder + arcBulge;
     const heightOffset = CAM_HEIGHT_HIP + (CAM_HEIGHT_ADS - CAM_HEIGHT_HIP) * ease;
-    const cosP = Math.cos(this.pitch);
-    const sinP = Math.sin(this.pitch);
+    // Effective view angles include the recoil offset so the gun's kick
+    // is visible to the player.
+    const effPitch = THREE.MathUtils.clamp(this.pitch + this.recoilPitch, -PITCH_LIMIT, PITCH_LIMIT);
+    const effYaw = this.yaw + this.recoilYaw;
+    const cosP = Math.cos(effPitch);
+    const sinP = Math.sin(effPitch);
     // Shift both camera origin and the look-at target laterally by the same
     // amount; that keeps the camera ray parallel to the no-shift case so the
     // crosshair still maps cleanly to a world ray.
-    const rx = Math.cos(this.yaw);
-    const rz = -Math.sin(this.yaw);
-    const cx = this.position.x + camDist * Math.sin(this.yaw) * cosP + shoulder * rx;
-    const cz = this.position.z + camDist * Math.cos(this.yaw) * cosP + shoulder * rz;
+    const rx = Math.cos(effYaw);
+    const rz = -Math.sin(effYaw);
+    const cx = this.position.x + camDist * Math.sin(effYaw) * cosP + shoulder * rx;
+    const cz = this.position.z + camDist * Math.cos(effYaw) * cosP + shoulder * rz;
     // Don't let the camera duck beneath the terrain at its own (x, z).
     // Using a fixed lower bound (e.g. 0.6) breaks pitch when the player is
     // standing in a depression below y = 0 — like the river — because the

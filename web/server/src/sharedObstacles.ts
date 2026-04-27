@@ -28,6 +28,51 @@ export interface SharedObstacle {
   variant: number;
 }
 
+/** Deterministic heightfield sample. Must stay byte-identical to the
+ *  client's `terrainHeight()` so the server's LOS / spawn snapping agrees
+ *  with the visual terrain players walk on. */
+export function terrainHeight(x: number, z: number, half: number): number {
+  const r = Math.hypot(x, z);
+  if (r > half - 60) {
+    const t = Math.min(1, (r - (half - 60)) / 60);
+    return 4 + t * t * 80;
+  }
+  const mx = -half * 0.45, mz = half * 0.45;
+  const md = Math.hypot(x - mx, z - mz);
+  const mountain = Math.exp(-(md * md) / (90 * 90)) * 55;
+  const riverWidth = 26;
+  const riverFactor = Math.exp(-(z * z) / (riverWidth * riverWidth));
+  const river = -6 * riverFactor;
+  const hills =
+    Math.sin(x * 0.035) * 1.4 +
+    Math.cos(z * 0.045) * 1.1 +
+    Math.sin((x + z) * 0.025) * 0.9 +
+    Math.cos((x - z) * 0.030) * 0.7;
+  const spawnInfluence = Math.exp(-(r * r) / (22 * 22));
+  return (mountain + river + hills) * (1 - spawnInfluence);
+}
+
+/** Returns true if the terrain *between* (x1,z1) and (x2,z2) rises above
+ *  the eye-line connecting eye heights y1 and y2 (i.e. a hill is in the
+ *  way). Samples uniformly along the segment. */
+export function segmentBlockedByTerrain(
+  x1: number, z1: number, y1: number,
+  x2: number, z2: number, y2: number,
+  half: number,
+): boolean {
+  const samples = 12;
+  // Skip the two endpoints so the bot doesn't accidentally call its own
+  // muzzle position "blocked".
+  for (let i = 1; i < samples; i++) {
+    const t = i / samples;
+    const x = x1 + (x2 - x1) * t;
+    const z = z1 + (z2 - z1) * t;
+    const y = y1 + (y2 - y1) * t;
+    if (terrainHeight(x, z, half) + 0.5 > y) return true;
+  }
+  return false;
+}
+
 /** Mulberry32 — small deterministic PRNG. Identical output for identical
  *  seed across both client and server. */
 function mulberry32(seed: number) {

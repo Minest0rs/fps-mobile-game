@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { Sky } from "three/examples/jsm/objects/Sky.js";
-import { generateObstacles } from "./sharedObstacles";
+import { generateObstacles, terrainHeight as sharedTerrainHeight } from "./sharedObstacles";
 
 export interface CylinderObstacle { x: number; z: number; r: number; }
 export interface Obstacles {
@@ -36,46 +36,10 @@ export interface SceneRefs {
  *    - Rolling hills everywhere else.
  *    - A massive cliff ring near the boundary (no straight walls); it climbs
  *      to ~80 m so players can't walk out of the playable area. */
-export function terrainHeight(x: number, z: number, half: number): number {
-  // Distance from centre and from the boundary (radial, not axis-aligned).
-  const r = Math.hypot(x, z);
-
-  // 1. Cliff ring — natural barrier replacing the old straight walls.
-  //    Activates only in the outer 60 m. The ramp is quadratic so it's
-  //    gentle at first then becomes a near-vertical wall.
-  if (r > half - 60) {
-    const t = Math.min(1, (r - (half - 60)) / 60);
-    const cliff = 4 + t * t * 80;
-    return cliff;
-  }
-
-  // 2. Mountain peak.
-  const mx = -half * 0.45, mz = half * 0.45;
-  const md = Math.hypot(x - mx, z - mz);
-  // Wide gaussian for a smooth, walkable mountain.
-  const mountain = Math.exp(-(md * md) / (90 * 90)) * 55;
-
-  // 3. River — a deep, wide blue trough along z = 0. The bed sits 6 m below
-  //    surrounding ground; tapers to flat ground over ±30 m on either side.
-  //    Made deep + wide enough that the water mesh is clearly visible from
-  //    any approach angle.
-  const riverWidth = 26;
-  const riverFactor = Math.exp(-(z * z) / (riverWidth * riverWidth));
-  const river = -6 * riverFactor;
-
-  // 4. Rolling hills (always-on background).
-  const hills =
-    Math.sin(x * 0.035) * 1.4 +
-    Math.cos(z * 0.045) * 1.1 +
-    Math.sin((x + z) * 0.025) * 0.9 +
-    Math.cos((x - z) * 0.030) * 0.7;
-
-  // 5. Spawn flat — keep a 25 m radius near the centre nearly level so
-  //    starting the match isn't on a slope. Blend smoothly out.
-  const spawnInfluence = Math.exp(-(r * r) / (22 * 22));
-  const baseTerrain = mountain + river + hills;
-  return baseTerrain * (1 - spawnInfluence);
-}
+/** Re-export the shared deterministic heightfield. The implementation
+ *  lives in `sharedObstacles.ts` so the server's bot AI can sample the
+ *  same terrain for line-of-sight checks. */
+export const terrainHeight = sharedTerrainHeight;
 
 /** Build the renderer, camera, lights, sky, ground, walls, and crates. */
 export function createScene(host: HTMLElement): SceneRefs {
@@ -345,71 +309,111 @@ function buildArena(scene: THREE.Scene, half: number, aimMeshes: THREE.Object3D[
   const shackRoofMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9 });
   const crateMat = new THREE.MeshStandardMaterial({ color: 0xb2823c, roughness: 0.78 });
 
+  // For obstacles on slopes we use the *minimum* terrain height around the
+  // footprint corners as the placement Y. This guarantees that even on a
+  // steep slope the uphill corner is still below the visible ground line
+  // (instead of poking out into the air on the downhill side).
+  const minCornerY = (cx: number, cz: number, hw: number, hd: number) => {
+    const corners = [
+      terrainHeight(cx - hw, cz - hd, half),
+      terrainHeight(cx + hw, cz - hd, half),
+      terrainHeight(cx - hw, cz + hd, half),
+      terrainHeight(cx + hw, cz + hd, half),
+      terrainHeight(cx,       cz,      half),
+    ];
+    return Math.min(...corners);
+  };
+  const maxCornerY = (cx: number, cz: number, hw: number, hd: number) => {
+    return Math.max(
+      terrainHeight(cx - hw, cz - hd, half),
+      terrainHeight(cx + hw, cz - hd, half),
+      terrainHeight(cx - hw, cz + hd, half),
+      terrainHeight(cx + hw, cz + hd, half),
+      terrainHeight(cx,       cz,      half),
+    );
+  };
+
   for (const o of shared) {
-    const gy = terrainHeight(o.x, o.z, half);
     if (o.type === "rock") {
       // Boulder: a flattened icosahedron with a slight non-uniform scale so
-      // each rock looks unique without needing a unique geometry.
+      // each rock looks unique without needing a unique geometry. We use
+      // the *highest* corner of the footprint as the placement reference
+      // and bury ~40% of the rock in the ground so even the uphill side
+      // doesn't pop out into the air on slopes.
       const r = o.w / 2;
+      const top = maxCornerY(o.x, o.z, r, r);
+      const buryDepth = r * 0.45;
+      const meshY = top + r * 0.7 - buryDepth;
       const rock = new THREE.Mesh(
         new THREE.IcosahedronGeometry(r, 0),
         rockMats[o.variant % rockMats.length],
       );
-      rock.position.set(o.x, gy + r * 0.7 - 0.2, o.z);
+      rock.position.set(o.x, meshY, o.z);
       rock.scale.set(1.0 + (o.variant % 3) * 0.08, 0.7 + (o.variant % 4) * 0.05, 1.0 + (o.variant % 5) * 0.05);
       rock.rotation.y = (o.variant * 0.7) % (Math.PI * 2);
       rock.castShadow = true; rock.receiveShadow = true;
       addSolid(rock);
+      // Collision box hugs the visible portion above ground.
+      const baseY = top - 0.2;
       obstacles.boxes.push(new THREE.Box3(
-        new THREE.Vector3(o.x - r, gy,            o.z - r),
-        new THREE.Vector3(o.x + r, gy + r * 1.4, o.z + r),
+        new THREE.Vector3(o.x - r, baseY,         o.z - r),
+        new THREE.Vector3(o.x + r, baseY + r * 1.4, o.z + r),
       ));
     } else if (o.type === "tree") {
-      // Simple low-poly tree: cylinder trunk + cone canopy.
+      // Simple low-poly tree: cylinder trunk + cone canopy. Trunk base is
+      // pushed below the lowest corner of the trunk's footprint so the
+      // root never floats off the ground on slopes.
       const trunkH = o.h * 0.55;
       const canopyH = o.h * 0.6;
+      const baseY = minCornerY(o.x, o.z, 0.4, 0.4) - 0.4;
       const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.40, trunkH, 8), trunkMat);
-      trunk.position.set(o.x, gy + trunkH / 2 - 0.1, o.z);
+      trunk.position.set(o.x, baseY + trunkH / 2, o.z);
       trunk.castShadow = true; trunk.receiveShadow = true;
       addSolid(trunk);
       const canopy = new THREE.Mesh(
         new THREE.ConeGeometry(o.h * 0.35, canopyH, 8),
         leafMats[o.variant % leafMats.length],
       );
-      canopy.position.set(o.x, gy + trunkH + canopyH / 2 - 0.4, o.z);
+      canopy.position.set(o.x, baseY + trunkH + canopyH / 2 - 0.4, o.z);
       canopy.castShadow = true;
       scene.add(canopy); // canopy isn't a hard collider, only the trunk is
       obstacles.boxes.push(new THREE.Box3(
-        new THREE.Vector3(o.x - 0.4, gy,             o.z - 0.4),
-        new THREE.Vector3(o.x + 0.4, gy + trunkH,    o.z + 0.4),
+        new THREE.Vector3(o.x - 0.4, baseY,             o.z - 0.4),
+        new THREE.Vector3(o.x + 0.4, baseY + trunkH,    o.z + 0.4),
       ));
     } else if (o.type === "shack") {
-      // Box body + 4-sided pyramid roof. Looks like a small wooden cabin.
+      // Box body + 4-sided pyramid roof. We anchor the *floor* to the
+      // highest terrain corner (so no corner of the floor floats above
+      // visible ground) and bury an extra 0.6 m beneath that so uphill
+      // corners stay submerged on slopes.
+      const hw = o.w / 2, hd = o.d / 2;
+      const floorY = maxCornerY(o.x, o.z, hw, hd) - 0.6;
       const body = new THREE.Mesh(new THREE.BoxGeometry(o.w, o.h, o.d), shackWallMat);
-      body.position.set(o.x, gy + o.h / 2 - 0.2, o.z);
+      body.position.set(o.x, floorY + o.h / 2, o.z);
       body.castShadow = true; body.receiveShadow = true;
       addSolid(body);
       const roof = new THREE.Mesh(
         new THREE.ConeGeometry(Math.max(o.w, o.d) * 0.75, 1.6, 4),
         shackRoofMat,
       );
-      roof.position.set(o.x, gy + o.h + 0.6, o.z);
+      roof.position.set(o.x, floorY + o.h + 0.8, o.z);
       roof.rotation.y = Math.PI / 4; // align the 4-sided cone to the box
       roof.castShadow = true;
       scene.add(roof);
       obstacles.boxes.push(new THREE.Box3(
-        new THREE.Vector3(o.x - o.w / 2, gy,             o.z - o.d / 2),
-        new THREE.Vector3(o.x + o.w / 2, gy + o.h + 1.0, o.z + o.d / 2),
+        new THREE.Vector3(o.x - hw, floorY,             o.z - hd),
+        new THREE.Vector3(o.x + hw, floorY + o.h + 1.0, o.z + hd),
       ));
     } else { // crate
       const s = o.w;
+      const baseY = maxCornerY(o.x, o.z, s / 2, s / 2) - 0.25;
       const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
-      c.position.set(o.x, gy + s * 0.5 - 0.1, o.z);
+      c.position.set(o.x, baseY + s * 0.5, o.z);
       c.castShadow = true; c.receiveShadow = true;
       addSolid(c);
       obstacles.boxes.push(new THREE.Box3(
-        new THREE.Vector3(o.x - s / 2, gy,     o.z - s / 2),
-        new THREE.Vector3(o.x + s / 2, gy + s, o.z + s / 2),
+        new THREE.Vector3(o.x - s / 2, baseY,     o.z - s / 2),
+        new THREE.Vector3(o.x + s / 2, baseY + s, o.z + s / 2),
       ));
     }
   }
